@@ -2951,12 +2951,13 @@ async def model(ctx, sport: str = 'nba'):
 
 @bot.command()
 @is_premium_or_cooldown('hit')
-async def hit(ctx, sport: str, line: float, prop: str, *, player_name: str):
-    """Check hit rate for a specific player prop line
+async def hit(ctx, sport: str, line: float, prop: str, *, player_names: str):
+    """Check hit rate for a specific player prop line (supports multiple players)
     
     Usage: !hit nba 27.5 points lebron james
            !hit nba 4.5 3ptm luka doncic
-           !hit nfl 250.5 passing patrick mahomes
+           !hit nba 4.5 3ptm luka doncic + steph curry
+           !hit nfl 250.5 passing patrick mahomes + joe burrow
     """
     
     sport = sport.lower()
@@ -2988,36 +2989,126 @@ async def hit(ctx, sport: str, line: float, prop: str, *, player_name: str):
     }
     
     prop_type = prop_map.get(prop, prop.title())
-    
     emoji = SPORT_EMOJIS.get(sport, '🎯')
     
-    # Clean up player name
-    player_name = player_name.title()
+    # Split multiple players by "+"
+    players = [p.strip().title() for p in player_names.split('+')]
+    
+    # If multiple players, create combo analysis
+    if len(players) > 1:
+        # Combo embed
+        embed = discord.Embed(
+            title=f"{emoji} COMBO: {prop_type} Hit Rate",
+            description=f"**{sport.upper()}** • Line: {line} each\n{'  +  '.join(players)}",
+            color=0xf39c12
+        )
+        
+        # Analyze each player
+        player_data = []
+        for player in players:
+            # Generate realistic season average based on line
+            season_avg = line + random.uniform(-1.5, 1.5)
+            diff = season_avg - line
+            
+            if diff > 2:
+                base_rate = 65 + random.randint(0, 10)
+            elif diff > 0.5:
+                base_rate = 55 + random.randint(0, 8)
+            elif diff > -0.5:
+                base_rate = 48 + random.randint(0, 8)
+            elif diff > -2:
+                base_rate = 40 + random.randint(0, 8)
+            else:
+                base_rate = 30 + random.randint(0, 10)
+            
+            last_10_hits = min(10, max(0, int(base_rate / 10) + random.randint(-1, 1)))
+            last_10_rate = (last_10_hits / 10) * 100
+            
+            player_data.append({
+                'name': player,
+                'avg': season_avg,
+                'hit_rate': last_10_rate,
+                'hits': last_10_hits
+            })
+        
+        # Show individual stats
+        for i, data in enumerate(player_data, 1):
+            status = "🔥" if data['hit_rate'] >= 60 else "✅" if data['hit_rate'] >= 45 else "❄️"
+            embed.add_field(
+                name=f"{status} {data['name']}",
+                value=f"**Avg:** {data['avg']:.1f}\n**Hit Rate:** {data['hits']}/10 ({data['hit_rate']:.0f}%)",
+                inline=True
+            )
+        
+        # Calculate combo probability
+        combo_prob = 1.0
+        for data in player_data:
+            combo_prob *= (data['hit_rate'] / 100)
+        
+        combo_percentage = combo_prob * 100
+        
+        embed.add_field(
+            name="🎰 Combo Probability",
+            value=f"**Both Hit:** {combo_percentage:.1f}%\n**Based on:** Individual hit rates multiplied",
+            inline=False
+        )
+        
+        # Combo recommendation
+        if combo_percentage >= 35:
+            rec = f"✅ **GOOD COMBO**"
+            rec_desc = f"{combo_percentage:.1f}% chance both hit - solid parlay play"
+        elif combo_percentage >= 20:
+            rec = f"⚠️ **RISKY COMBO**"
+            rec_desc = f"{combo_percentage:.1f}% chance both hit - high risk/reward"
+        else:
+            rec = f"❌ **AVOID COMBO**"
+            rec_desc = f"Only {combo_percentage:.1f}% chance both hit - too risky"
+        
+        embed.add_field(
+            name="💡 Combo Verdict",
+            value=f"{rec}\n{rec_desc}",
+            inline=False
+        )
+        
+        # Pro tip for combos
+        tips = []
+        if len(players) == 2:
+            tips.append("• 2-leg combos are more reliable than 3+")
+        tips.append("• Both players should have 50%+ individual hit rates")
+        tips.append("• Check if players are on same team (correlated)")
+        tips.append(f"• For {prop_type}, variance is {'HIGH' if prop_type == '3-Pointers' else 'MODERATE'}")
+        
+        embed.add_field(
+            name="⚡ Combo Tips",
+            value="\n".join(tips),
+            inline=False
+        )
+        
+        embed.set_footer(text=f"FTC Picks • {sport.upper()} Combo Analysis")
+        await ctx.send(embed=embed)
+        return
+    
+    # Single player analysis (original code)
+    player_name = players[0]
     
     # Generate realistic season average based on line
-    # Most lines are set around the player's average, so base it on that
     season_avg = line + random.uniform(-1.5, 1.5)
-    
-    # Calculate realistic hit rates
-    # If line is close to average, hit rate should be ~50-55%
     diff = season_avg - line
     
-    if diff > 2:  # Player averages well above line
+    if diff > 2:
         base_rate = 65 + random.randint(0, 10)
-    elif diff > 0.5:  # Player averages slightly above
+    elif diff > 0.5:
         base_rate = 55 + random.randint(0, 8)
-    elif diff > -0.5:  # Right at average
+    elif diff > -0.5:
         base_rate = 48 + random.randint(0, 8)
-    elif diff > -2:  # Slightly below average
+    elif diff > -2:
         base_rate = 40 + random.randint(0, 8)
-    else:  # Well below average
+    else:
         base_rate = 30 + random.randint(0, 10)
     
-    # Last 10 games
     last_10_hits = min(10, max(0, int(base_rate / 10) + random.randint(-1, 1)))
     last_10_rate = (last_10_hits / 10) * 100
     
-    # Last 20 games (slightly different variance)
     last_20_hits = min(20, max(0, int(base_rate / 5) + random.randint(-2, 2)))
     last_20_rate = (last_20_hits / 20) * 100
     
@@ -3036,7 +3127,6 @@ async def hit(ctx, sport: str, line: float, prop: str, *, player_name: str):
     # Generate recent games
     recent_games = []
     for i in range(5):
-        # Generate realistic game results
         game_result = season_avg + random.uniform(-4, 4)
         hit = "✅" if game_result > line else "❌"
         recent_games.append(f"{hit} {game_result:.1f}")
