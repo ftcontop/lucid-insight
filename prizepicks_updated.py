@@ -3240,18 +3240,16 @@ async def lines(ctx, sport: str, *, player_names: str):
     # Split multiple players by "+"
     players = [p.strip() for p in player_names.split('+')]
     
-    # Fetch current picks for the sport
-    picks = picks_data.get(sport, [])
+    # ALWAYS fetch fresh data for lines command
+    msg = await ctx.send(f"⏳ Fetching live {sport.upper()} lines from bookmakers...")
+    picks_data[sport] = await aggregate_picks(sport)
+    picks = picks_data[sport]
     
     if not picks:
-        msg = await ctx.send(f"⏳ Fetching live {sport.upper()} lines from bookmakers...")
-        picks_data[sport] = await aggregate_picks(sport)
-        picks = picks_data[sport]
-        await msg.delete()
-    
-    if not picks:
-        await ctx.send(f"❌ No active games for {sport.upper()} right now. Check back during game days!")
+        await msg.edit(content=f"❌ No player prop lines available for {sport.upper()} right now.\n\n**Possible reasons:**\n• No games scheduled today\n• Games haven't posted player props yet\n• API doesn't have {sport.upper()} props available\n• Lines pulled due to injury/scratch\n\nTry `!predict {sport}` to see if there's any data!")
         return
+    
+    await msg.delete()
     
     # Find picks for each player
     all_player_picks = []
@@ -3264,7 +3262,11 @@ async def lines(ctx, sport: str, *, player_names: str):
             })
     
     if not all_player_picks:
-        await ctx.send(f"❌ No lines found for **{', '.join(players)}** in today's {sport.upper()} games.\n\nMake sure they're playing today and try again!")
+        # Show available players to help user
+        all_players = list(set([p['player'] for p in picks]))
+        sample_players = ', '.join(all_players[:5])
+        
+        await ctx.send(f"❌ No lines found for **{', '.join(players)}** in today's {sport.upper()} games.\n\n**Available players:** {sample_players}{'...' if len(all_players) > 5 else ''}\n\nMake sure spelling is correct!")
         return
     
     # Create embed for each player
@@ -3277,7 +3279,7 @@ async def lines(ctx, sport: str, *, player_names: str):
         
         embed = discord.Embed(
             title=f"{emoji} {player_name} - Live Betting Lines",
-            description=f"**{sport.upper()}** • {game}\n📊 Consensus from {len(player_picks)} bookmakers",
+            description=f"**{sport.upper()}** • {game}\n📊 Consensus from multiple bookmakers",
             color=0x3498db
         )
         
@@ -3320,9 +3322,9 @@ async def lines(ctx, sport: str, *, player_names: str):
             # Add consensus indicator
             consensus_pct = (len([p for p in prop_picks if p['line'] == most_common_line]) / len(prop_picks)) * 100
             if consensus_pct >= 75:
-                field_value += f"✅ {int(consensus_pct)}% consensus on {most_common_line}"
+                field_value += f"✅ {int(consensus_pct)}% consensus"
             elif consensus_pct >= 50:
-                field_value += f"⚠️ {int(consensus_pct)}% on {most_common_line}, some variance"
+                field_value += f"⚠️ {int(consensus_pct)}% agree, some variance"
             else:
                 field_value += f"⚡ Lines vary - shop around!"
             
@@ -3351,7 +3353,7 @@ async def lines(ctx, sport: str, *, player_names: str):
                 inline=False
             )
         
-        embed.set_footer(text=f"FTC Picks • Live {sport.upper()} Lines • Updated in real-time")
+        embed.set_footer(text=f"FTC Picks • Live {sport.upper()} Lines • Just fetched from API")
         await ctx.send(embed=embed)
     
     # If multiple players, add combo suggestion
