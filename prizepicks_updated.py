@@ -9,6 +9,10 @@ import sqlite3
 import random
 import time
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (for local development)
+load_dotenv()
 
 # ===== CONFIG SECTION =====
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
