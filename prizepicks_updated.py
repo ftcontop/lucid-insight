@@ -10,13 +10,18 @@ import random
 import time
 import os
 from dotenv import load_dotenv
+from groq import Groq
 
 # Load environment variables from .env file (for local development)
 load_dotenv()
 
 # ===== CONFIG SECTION =====
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
-ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd62731f2e81d28e9af850c0fdfee29ef')  # Fallback to default
+ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
+GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')  # AI Chat
+
+# Initialize Groq client
+groq_client = Groq(api_key=GROQ_API_KEY)
 
 # Payment info
 WEBSITE_URL = 'https://ftcpicks.netlify.app/'
@@ -3386,6 +3391,112 @@ async def lines(ctx, sport: str, *, player_names: str):
         
         await ctx.send(embed=combo_embed)
 
+# === AI CHAT COMMAND ===
+
+@bot.command(aliases=['chat', 'ai', 'ask'])
+async def aichat(ctx, *, question: str):
+    """Ask AI about betting, picks, strategies, or anything sports related
+    
+    Usage: !aichat should I bet on Luka 3PTM over 3.5?
+           !ask what's a good parlay for tonight?
+           !ai analyze this bet slip
+    """
+    
+    # Show typing indicator
+    async with ctx.typing():
+        try:
+            # Create AI chat with sports betting context
+            response = groq_client.chat.completions.create(
+                model="llama-3.1-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are an expert sports betting analyst and assistant for FTC Picks, a premium sports betting service. 
+
+Your expertise:
+- Player prop analysis (points, rebounds, assists, 3-pointers, etc.)
+- Line value assessment and edge finding
+- Bankroll management and bet sizing
+- Parlay building strategies
+- Sharp vs public money concepts
+- NBA, NFL, MLB, NHL, Soccer betting
+- Injury impact analysis
+- Matchup breakdowns
+
+Your personality:
+- Confident but not cocky
+- Honest about risk (never guarantee wins)
+- Use sports betting slang naturally
+- Keep responses concise (2-3 paragraphs max)
+- Give actionable advice
+- Use emojis sparingly for emphasis
+
+When analyzing bets:
+1. Assess the value (is the line good?)
+2. Mention key factors (injury, matchup, trends)
+3. Give a clear recommendation (smash, proceed with caution, or fade)
+4. Suggest bet sizing if relevant
+
+Never:
+- Guarantee wins or promise specific outcomes
+- Be overly verbose or academic
+- Ignore responsible gambling principles
+- Give financial advice beyond betting strategy"""
+                    },
+                    {
+                        "role": "user",
+                        "content": question
+                    }
+                ],
+                temperature=0.7,
+                max_tokens=500
+            )
+            
+            ai_response = response.choices[0].message.content
+            
+            # Create embed
+            embed = discord.Embed(
+                title="🤖 FTC AI Analysis",
+                description=ai_response,
+                color=0x9b59b6
+            )
+            
+            embed.set_footer(text=f"Asked by {ctx.author.name} • Powered by Groq AI")
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            await ctx.send(f"❌ AI chat error: {str(e)}\n\nTry again or contact support if issue persists.")
+
+@bot.command()
+async def analyze_slip(ctx):
+    """Analyze a bet slip screenshot (attach image)
+    
+    Usage: !analyze_slip [attach screenshot of bet slip]
+    """
+    
+    if not ctx.message.attachments:
+        await ctx.send("❌ Please attach a bet slip screenshot!\n\nUsage: `!analyze_slip` + attach image")
+        return
+    
+    async with ctx.typing():
+        try:
+            # For now, give general advice since image analysis requires vision model
+            # In future, can integrate with GPT-4 Vision or similar
+            
+            embed = discord.Embed(
+                title="🤖 Bet Slip Analysis",
+                description="**Image analysis coming soon!**\n\nFor now, use `!aichat` and describe your picks:\n\nExample: `!aichat I'm betting Luka 30+ points, Steph 4+ threes, and LeBron 8+ assists. Thoughts?`",
+                color=0xe74c3c
+            )
+            
+            embed.set_footer(text="Vision AI analysis feature in development")
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            await ctx.send(f"❌ Error: {str(e)}")
+
 
 # HELP COMMANDS
 @bot.command()
@@ -3423,6 +3534,13 @@ async def commands(ctx):
     embed.add_field(
         name="🤖 ADVANCED ANALYSIS",
         value="`!analyze <sport> <player>` - Deep AI pick analysis with reasoning\n`!matchup <sport>` - Head-to-head game breakdown\n`!sharp <sport>` - Track sharp money movement\n`!model <sport>` - AI model predictions & expected value\n`!hit <sport> <line> <prop> <player>` - Player prop hit rate tracker\n`!lines <sport> <player>` - Get current betting lines for player(s)\n\n⏰ **Trial:** 4 hour cooldown\n⏰ **Premium:** 2 hour cooldown",
+        inline=False
+    )
+    
+    # AI Chat
+    embed.add_field(
+        name="🤖 AI CHAT (NO COOLDOWN)",
+        value="`!aichat <question>` or `!ask` or `!ai` - Ask AI about bets, strategies, picks\n`!analyze_slip` - Analyze bet slip (attach image)\n\n💬 **Examples:**\n• `!ask should I bet Luka 3PTM over 3.5?`\n• `!aichat what's a good NBA parlay tonight?`\n• `!ai is this a smart bet?`",
         inline=False
     )
     
@@ -3484,4 +3602,3 @@ if __name__ == "__main__":
     print(f"Owner ID: {BOT_OWNER_ID}")
     print(f"Website: {WEBSITE_URL}")
     bot.run(BOT_TOKEN)
-
