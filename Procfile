@@ -1,0 +1,1 @@
+worker: python prizepicks_updated.py
