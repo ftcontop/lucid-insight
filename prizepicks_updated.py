@@ -16,7 +16,7 @@ load_dotenv()
 
 # ===== CONFIG SECTION =====
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
-ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
+ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd62731f2e81d28e9af850c0fdfee29ef')  # Fallback to default
 
 # Payment info
 WEBSITE_URL = 'https://ftcpicks.netlify.app/'
@@ -3484,3 +3484,4 @@ if __name__ == "__main__":
     print(f"Owner ID: {BOT_OWNER_ID}")
     print(f"Website: {WEBSITE_URL}")
     bot.run(BOT_TOKEN)
+
