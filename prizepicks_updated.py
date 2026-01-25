@@ -3405,13 +3405,48 @@ async def aichat(ctx, *, question: str):
     # Show typing indicator
     async with ctx.typing():
         try:
+            # Try to extract sport from question
+            question_lower = question.lower()
+            detected_sport = None
+            for sport in ['nba', 'nfl', 'mlb', 'nhl', 'soccer']:
+                if sport in question_lower:
+                    detected_sport = sport
+                    break
+            
+            # If no sport detected, check for team/player mentions
+            if not detected_sport:
+                # Check for NBA terms
+                if any(word in question_lower for word in ['luka', 'lebron', 'steph', 'curry', 'lakers', 'warriors', 'points', 'rebounds', 'assists', '3ptm', 'threes']):
+                    detected_sport = 'nba'
+                # Check for NFL terms
+                elif any(word in question_lower for word in ['mahomes', 'allen', 'chiefs', 'bills', 'passing', 'rushing', 'touchdown']):
+                    detected_sport = 'nfl'
+            
+            # Get current picks data if sport detected
+            live_data_context = ""
+            if detected_sport:
+                picks = picks_data.get(detected_sport, [])
+                if not picks:
+                    # Fetch fresh data
+                    picks_data[detected_sport] = await aggregate_picks(detected_sport)
+                    picks = picks_data[detected_sport]
+                
+                if picks:
+                    # Build context from top picks
+                    top_picks = picks[:10]  # Top 10 picks
+                    live_data_context = f"\n\n**CURRENT {detected_sport.upper()} BETTING DATA (Use this for accurate info):**\n"
+                    for pick in top_picks:
+                        live_data_context += f"- {pick['player']}: {pick['prop_type']} line {pick['line']} ({pick['pick']}) at {pick['avg_odds']} odds, {pick['sources']} books agree, {pick['game']}\n"
+            
             # Create AI chat with sports betting context
             response = groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",  # Updated model (not deprecated)
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are an expert sports betting analyst and assistant for FTC Picks, a premium sports betting service. 
+                        "content": f"""You are an expert sports betting analyst and assistant for FTC Picks, a premium sports betting service. 
+
+Today's date: {datetime.now().strftime('%B %d, %Y')}
 
 Your expertise:
 - Player prop analysis (points, rebounds, assists, 3-pointers, etc.)
@@ -3432,16 +3467,24 @@ Your personality:
 - Use emojis sparingly for emphasis
 
 When analyzing bets:
-1. Assess the value (is the line good?)
-2. Mention key factors (injury, matchup, trends)
-3. Give a clear recommendation (smash, proceed with caution, or fade)
-4. Suggest bet sizing if relevant
+1. If live betting data is provided, USE IT for accurate current lines and player info
+2. Assess the value (is the line good?)
+3. Mention key factors (injury, matchup, trends)
+4. Give a clear recommendation (smash, proceed with caution, or fade)
+5. Suggest bet sizing if relevant
+
+CRITICAL RULES:
+- If you don't have current info about a player/team, say "I don't have current data on this, but here's what I'd consider..."
+- Never make up stats or team rosters
+- If live data is provided above, prioritize that over your training data
+- Always acknowledge today's date when discussing games
 
 Never:
 - Guarantee wins or promise specific outcomes
 - Be overly verbose or academic
 - Ignore responsible gambling principles
-- Give financial advice beyond betting strategy"""
+- Give financial advice beyond betting strategy
+- Make up player stats or current team rosters{live_data_context}"""
                     },
                     {
                         "role": "user",
@@ -3460,6 +3503,13 @@ Never:
                 description=ai_response,
                 color=0x9b59b6
             )
+            
+            if detected_sport and picks:
+                embed.add_field(
+                    name="📊 Data Source",
+                    value=f"Using live {detected_sport.upper()} betting data from {len(picks)} current picks",
+                    inline=False
+                )
             
             embed.set_footer(text=f"Asked by {ctx.author.name} • Powered by Groq AI")
             
