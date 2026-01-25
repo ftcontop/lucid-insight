@@ -117,7 +117,9 @@ def init_db():
                   model_count INTEGER DEFAULT 0,
                   model_reset_time INTEGER,
                   hit_count INTEGER DEFAULT 0,
-                  hit_reset_time INTEGER)''')
+                  hit_reset_time INTEGER,
+                  lines_count INTEGER DEFAULT 0,
+                  lines_reset_time INTEGER)''')
     
     c.execute('''CREATE TABLE IF NOT EXISTS user_bets
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -3217,6 +3219,171 @@ async def hit(ctx, sport: str, line: float, prop: str, *, player_names: str):
     embed.set_footer(text=f"FTC Picks • {sport.upper()} Hit Rate Analysis")
     await ctx.send(embed=embed)
 
+@bot.command()
+@is_premium_or_cooldown('lines')
+async def lines(ctx, sport: str, *, player_names: str):
+    """Get current betting lines for player(s) - Shows ALL props
+    
+    Usage: !lines nba luka doncic
+           !lines nba max christie + luka doncic
+           !lines nfl patrick mahomes
+           !lines mlb shohei ohtani + aaron judge
+    """
+    
+    sport = sport.lower()
+    if sport not in ['nba', 'nfl', 'mlb', 'nhl', 'soccer']:
+        await ctx.send(f"❌ Sport **{sport}** not supported. Use: nba, nfl, mlb, nhl, soccer")
+        return
+    
+    emoji = SPORT_EMOJIS.get(sport, '🎯')
+    
+    # Split multiple players by "+"
+    players = [p.strip() for p in player_names.split('+')]
+    
+    # Fetch current picks for the sport
+    picks = picks_data.get(sport, [])
+    
+    if not picks:
+        msg = await ctx.send(f"⏳ Fetching live {sport.upper()} lines from bookmakers...")
+        picks_data[sport] = await aggregate_picks(sport)
+        picks = picks_data[sport]
+        await msg.delete()
+    
+    if not picks:
+        await ctx.send(f"❌ No active games for {sport.upper()} right now. Check back during game days!")
+        return
+    
+    # Find picks for each player
+    all_player_picks = []
+    for player in players:
+        player_picks = [p for p in picks if player.lower() in p['player'].lower()]
+        if player_picks:
+            all_player_picks.append({
+                'name': player_picks[0]['player'],
+                'picks': player_picks
+            })
+    
+    if not all_player_picks:
+        await ctx.send(f"❌ No lines found for **{', '.join(players)}** in today's {sport.upper()} games.\n\nMake sure they're playing today and try again!")
+        return
+    
+    # Create embed for each player
+    for player_data in all_player_picks:
+        player_name = player_data['name']
+        player_picks = player_data['picks']
+        
+        # Get game info
+        game = player_picks[0]['game'] if player_picks else "TBD"
+        
+        embed = discord.Embed(
+            title=f"{emoji} {player_name} - Live Betting Lines",
+            description=f"**{sport.upper()}** • {game}\n📊 Consensus from {len(player_picks)} bookmakers",
+            color=0x3498db
+        )
+        
+        # Group picks by prop type
+        prop_groups = {}
+        for pick in player_picks:
+            prop = pick['prop_type']
+            if prop not in prop_groups:
+                prop_groups[prop] = []
+            prop_groups[prop].append(pick)
+        
+        # Show each prop type
+        for prop_type, prop_picks in prop_groups.items():
+            # Get the consensus line (most common)
+            lines = [p['line'] for p in prop_picks]
+            most_common_line = max(set(lines), key=lines.count)
+            
+            # Separate over/under
+            over_picks = [p for p in prop_picks if 'over' in p['pick'].lower()]
+            under_picks = [p for p in prop_picks if 'under' in p['pick'].lower()]
+            
+            # Calculate average odds
+            if over_picks:
+                avg_over_odds = sum(p['avg_odds'] for p in over_picks) / len(over_picks)
+                over_odds_str = f"+{int(avg_over_odds)}" if avg_over_odds > 0 else str(int(avg_over_odds))
+            else:
+                over_odds_str = "N/A"
+            
+            if under_picks:
+                avg_under_odds = sum(p['avg_odds'] for p in under_picks) / len(under_picks)
+                under_odds_str = f"+{int(avg_under_odds)}" if avg_under_odds > 0 else str(int(avg_under_odds))
+            else:
+                under_odds_str = "N/A"
+            
+            # Build field value
+            field_value = f"**Line:** {most_common_line}\n"
+            field_value += f"📈 **MORE:** {over_odds_str}\n"
+            field_value += f"📉 **LESS:** {under_odds_str}\n"
+            
+            # Add consensus indicator
+            consensus_pct = (len([p for p in prop_picks if p['line'] == most_common_line]) / len(prop_picks)) * 100
+            if consensus_pct >= 75:
+                field_value += f"✅ {int(consensus_pct)}% consensus on {most_common_line}"
+            elif consensus_pct >= 50:
+                field_value += f"⚠️ {int(consensus_pct)}% on {most_common_line}, some variance"
+            else:
+                field_value += f"⚡ Lines vary - shop around!"
+            
+            embed.add_field(
+                name=f"🎯 {prop_type}",
+                value=field_value,
+                inline=True
+            )
+        
+        # Add bookmakers involved
+        unique_books = list(set([book for pick in player_picks for book in pick['bookmakers']]))
+        embed.add_field(
+            name="📚 Bookmakers",
+            value=", ".join(unique_books[:5]) + ("..." if len(unique_books) > 5 else ""),
+            inline=False
+        )
+        
+        # Add quick recommendation
+        high_consensus = [p for p in player_picks if p['sources'] >= 3]
+        if high_consensus:
+            best_pick = max(high_consensus, key=lambda x: x['avg_probability'])
+            direction = "MORE" if "over" in best_pick['pick'].lower() else "LESS"
+            embed.add_field(
+                name="💡 FTC Recommendation",
+                value=f"**{direction} {best_pick['line']} {best_pick['prop_type']}**\n{best_pick['sources']} books agree • {best_pick['avg_probability']}% confidence",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"FTC Picks • Live {sport.upper()} Lines • Updated in real-time")
+        await ctx.send(embed=embed)
+    
+    # If multiple players, add combo suggestion
+    if len(all_player_picks) > 1:
+        combo_embed = discord.Embed(
+            title="🎰 Combo Suggestion",
+            description=f"Build a parlay with these {len(all_player_picks)} players",
+            color=0xf39c12
+        )
+        
+        combo_text = ""
+        for i, player_data in enumerate(all_player_picks, 1):
+            player_name = player_data['name']
+            picks = player_data['picks']
+            best = max(picks, key=lambda x: x.get('sources', 0))
+            direction = "MORE" if "over" in best['pick'].lower() else "LESS"
+            combo_text += f"**{i}.** {player_name} {direction} {best['line']} {best['prop_type']}\n"
+        
+        combo_embed.add_field(
+            name="🔥 Suggested Parlay",
+            value=combo_text,
+            inline=False
+        )
+        
+        combo_embed.add_field(
+            name="💰 Pro Tip",
+            value="Use `!hit` to check each player's hit rate before parlaying!",
+            inline=False
+        )
+        
+        await ctx.send(embed=combo_embed)
+
 
 # HELP COMMANDS
 @bot.command()
@@ -3253,7 +3420,7 @@ async def commands(ctx):
     # Advanced analysis
     embed.add_field(
         name="🤖 ADVANCED ANALYSIS",
-        value="`!analyze <sport> <player>` - Deep AI pick analysis with reasoning\n`!matchup <sport>` - Head-to-head game breakdown\n`!sharp <sport>` - Track sharp money movement\n`!model <sport>` - AI model predictions & expected value\n`!hit <sport> <line> <prop> <player>` - Player prop hit rate tracker\n\n⏰ **Trial:** 4 hour cooldown\n⏰ **Premium:** 2 hour cooldown",
+        value="`!analyze <sport> <player>` - Deep AI pick analysis with reasoning\n`!matchup <sport>` - Head-to-head game breakdown\n`!sharp <sport>` - Track sharp money movement\n`!model <sport>` - AI model predictions & expected value\n`!hit <sport> <line> <prop> <player>` - Player prop hit rate tracker\n`!lines <sport> <player>` - Get current betting lines for player(s)\n\n⏰ **Trial:** 4 hour cooldown\n⏰ **Premium:** 2 hour cooldown",
         inline=False
     )
     
