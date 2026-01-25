@@ -2967,15 +2967,23 @@ async def hit(ctx, sport: str, line: float, prop: str, *, player_name: str):
     
     # Map common prop names
     prop_map = {
-        'points': 'Points', 'pts': 'Points', 'point': 'Points',
-        'rebounds': 'Rebounds', 'rebs': 'Rebounds', 'reb': 'Rebounds',
-        'assists': 'Assists', 'ast': 'Assists', 'assist': 'Assists',
-        'passing': 'Pass Yards', 'pass': 'Pass Yards', 'passing yards': 'Pass Yards',
-        'rushing': 'Rush Yards', 'rush': 'Rush Yards', 'rushing yards': 'Rush Yards',
+        'points': 'Points', 'pts': 'Points', 'point': 'Points', 'p': 'Points',
+        'rebounds': 'Rebounds', 'rebs': 'Rebounds', 'reb': 'Rebounds', 'r': 'Rebounds',
+        'assists': 'Assists', 'ast': 'Assists', 'assist': 'Assists', 'a': 'Assists',
+        'passing': 'Pass Yards', 'pass': 'Pass Yards', 'passing yards': 'Pass Yards', 'passyds': 'Pass Yards', 'py': 'Pass Yards',
+        'rushing': 'Rush Yards', 'rush': 'Rush Yards', 'rushing yards': 'Rush Yards', 'rushyds': 'Rush Yards', 'ry': 'Rush Yards',
         'receiving': 'Receptions', 'receptions': 'Receptions', 'rec': 'Receptions',
-        'threes': '3-Pointers', '3pt': '3-Pointers', '3s': '3-Pointers',
-        'goals': 'Goals', 'goal': 'Goals',
-        'shots': 'Shots on Goal', 'sog': 'Shots on Goal'
+        'threes': '3-Pointers', '3pt': '3-Pointers', '3s': '3-Pointers', '3ptm': '3-Pointers', '3pm': '3-Pointers', '3pointers': '3-Pointers',
+        'steals': 'Steals', 'stl': 'Steals', 'steal': 'Steals',
+        'blocks': 'Blocks', 'blk': 'Blocks', 'block': 'Blocks',
+        'goals': 'Goals', 'goal': 'Goals', 'g': 'Goals',
+        'shots': 'Shots on Goal', 'sog': 'Shots on Goal', 'shotsongoal': 'Shots on Goal',
+        'hits': 'Hits', 'hit': 'Hits', 'h': 'Hits',
+        'runs': 'Runs', 'run': 'Runs',
+        'rbis': 'RBIs', 'rbi': 'RBIs',
+        'totalbases': 'Total Bases', 'tb': 'Total Bases', 'bases': 'Total Bases',
+        'passtds': 'Pass TDs', 'passtd': 'Pass TDs', 'ptd': 'Pass TDs',
+        'rushtds': 'Rush TDs', 'rushtd': 'Rush TDs', 'rtd': 'Rush TDs'
     }
     
     prop_type = prop_map.get(prop, prop.title())
