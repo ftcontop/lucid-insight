@@ -3407,7 +3407,7 @@ async def aichat(ctx, *, question: str):
         try:
             # Create AI chat with sports betting context
             response = groq_client.chat.completions.create(
-                model="llama-3.1-70b-versatile",
+                model="llama-3.3-70b-versatile",  # Updated model (not deprecated)
                 messages=[
                     {
                         "role": "system",
