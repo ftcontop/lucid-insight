@@ -3519,6 +3519,132 @@ Never:
             await ctx.send(f"❌ AI chat error: {str(e)}\n\nTry again or contact support if issue persists.")
 
 @bot.command()
+async def embed(ctx, *, message: str):
+    """Turn your message into a professional marketing embed
+    
+    Usage: !embed This is the best Roblox script ever for only $10
+           !embed New NBA picks dropping tonight - 85% win rate this week
+           !embed FTCHUB premium lifetime access - limited slots
+    """
+    
+    async with ctx.typing():
+        try:
+            # Generate marketing content with AI
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": """You are a professional marketing copywriter who creates compelling Discord embeds.
+
+Your task: Take the user's basic message and expand it into a persuasive, professional marketing embed.
+
+Structure your response EXACTLY like this (use these exact labels):
+
+TITLE: [Catchy, attention-grabbing title with emojis]
+
+DESCRIPTION: [2-3 sentences that elaborate on the message, make it sound premium and valuable]
+
+FEATURES: [3-5 bullet points of benefits/features, each starting with an emoji]
+
+CTA: [Strong call-to-action that creates urgency]
+
+Style guidelines:
+- Use emojis strategically (not too many)
+- Make it sound premium and exclusive
+- Create FOMO (fear of missing out)
+- Keep it concise but impactful
+- Use powerful action words
+- Sound confident, not desperate
+- For products: emphasize value and quality
+- For services: emphasize results and expertise
+- For announcements: build hype and excitement
+
+DO NOT use markdown formatting like ** or __. Just plain text with emojis."""
+                    },
+                    {
+                        "role": "user",
+                        "content": message
+                    }
+                ],
+                temperature=0.8,
+                max_tokens=400
+            )
+            
+            ai_content = response.choices[0].message.content
+            
+            # Parse AI response
+            lines = ai_content.strip().split('\n')
+            title = ""
+            description = ""
+            features = []
+            cta = ""
+            
+            current_section = None
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                if line.startswith('TITLE:'):
+                    title = line.replace('TITLE:', '').strip()
+                    current_section = 'title'
+                elif line.startswith('DESCRIPTION:'):
+                    description = line.replace('DESCRIPTION:', '').strip()
+                    current_section = 'description'
+                elif line.startswith('FEATURES:'):
+                    current_section = 'features'
+                elif line.startswith('CTA:'):
+                    cta = line.replace('CTA:', '').strip()
+                    current_section = 'cta'
+                elif current_section == 'description' and not line.startswith(('TITLE:', 'FEATURES:', 'CTA:')):
+                    description += " " + line
+                elif current_section == 'features' and not line.startswith(('TITLE:', 'DESCRIPTION:', 'CTA:')):
+                    if line.startswith('-') or line.startswith('•') or line[0] in '🔥✅💎⚡🎯💰🚀⭐':
+                        features.append(line.lstrip('-• '))
+                elif current_section == 'cta' and not line.startswith(('TITLE:', 'DESCRIPTION:', 'FEATURES:')):
+                    cta += " " + line
+            
+            # Create the embed
+            embed_msg = discord.Embed(
+                title=title if title else "🔥 Special Announcement",
+                description=description if description else message,
+                color=0xe91e63  # Pink/red for attention
+            )
+            
+            # Add features
+            if features:
+                features_text = '\n'.join(features[:5])  # Max 5 features
+                embed_msg.add_field(
+                    name="✨ What You Get",
+                    value=features_text,
+                    inline=False
+                )
+            
+            # Add CTA
+            if cta:
+                embed_msg.add_field(
+                    name="🎯 Take Action",
+                    value=cta,
+                    inline=False
+                )
+            
+            # Add branding
+            embed_msg.set_footer(text="FTC Picks • Premium Services", icon_url=ctx.guild.icon.url if ctx.guild.icon else None)
+            embed_msg.timestamp = datetime.now()
+            
+            # Delete user's command message for clean look
+            try:
+                await ctx.message.delete()
+            except:
+                pass
+            
+            await ctx.send(embed=embed_msg)
+            
+        except Exception as e:
+            await ctx.send(f"❌ Embed creation error: {str(e)}")
+
+@bot.command()
 async def analyze_slip(ctx):
     """Analyze a bet slip screenshot (attach image)
     
@@ -3590,7 +3716,7 @@ async def commands(ctx):
     # AI Chat
     embed.add_field(
         name="🤖 AI CHAT (NO COOLDOWN)",
-        value="`!aichat <question>` or `!ask` or `!ai` - Ask AI about bets, strategies, picks\n`!analyze_slip` - Analyze bet slip (attach image)\n\n💬 **Examples:**\n• `!ask should I bet Luka 3PTM over 3.5?`\n• `!aichat what's a good NBA parlay tonight?`\n• `!ai is this a smart bet?`",
+        value="`!aichat <question>` or `!ask` or `!ai` - Ask AI about bets, strategies, picks\n`!embed <message>` - Turn your message into professional marketing embed\n`!analyze_slip` - Analyze bet slip (attach image)\n\n💬 **Examples:**\n• `!ask should I bet Luka 3PTM over 3.5?`\n• `!embed Best script ever for $10`\n• `!ai is this a smart bet?`",
         inline=False
     )
     
