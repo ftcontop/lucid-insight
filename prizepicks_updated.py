@@ -18,26 +18,6 @@ load_dotenv()
 # ===== CONFIG SECTION =====
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
 ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
-import discord
-from discord.ext import commands
-import aiohttp
-import asyncio
-from datetime import datetime, timedelta
-import json
-from collections import defaultdict
-import sqlite3
-import random
-import time
-import os
-from dotenv import load_dotenv
-from groq import Groq
-
-# Load environment variables from .env file (for local development)
-load_dotenv()
-
-# ===== CONFIG SECTION =====
-BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
-ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')  # AI Chat
 
 # Initialize Groq client
@@ -841,15 +821,21 @@ async def fetch_nhl_props():
 
 async def fetch_tennis_props():
     """Fetch tennis betting lines"""
-    picks = []
+    all_picks = []
+    
     for league in ['tennis_atp', 'tennis_wta']:
         url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
         params = {"apiKey": ODDS_API_KEY, "regions": "us", "markets": "h2h", "oddsFormat": "american"}
+        
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, params=params, timeout=15) as resp:
+                    print(f"Tennis {league} API Status: {resp.status}")
+                    
                     if resp.status == 200:
                         events = await resp.json()
+                        print(f"Found {len(events)} tennis events in {league}")
+                        
                         for event in events:
                             if 'bookmakers' in event and event['bookmakers']:
                                 for bookmaker in event['bookmakers']:
@@ -857,21 +843,60 @@ async def fetch_tennis_props():
                                         for market in bookmaker['markets']:
                                             if 'outcomes' in market:
                                                 for outcome in market['outcomes']:
-                                                    picks.append({
-                                                        'player': outcome.get('name', 'Unknown'),
+                                                    player_name = outcome.get('name', 'Unknown')
+                                                    price = outcome.get('price', 0)
+                                                    probability = odds_to_probability(price)
+                                                    
+                                                    all_picks.append({
+                                                        'player': player_name,
                                                         'prop_type': 'To Win Match',
                                                         'line': 1,
                                                         'pick': 'Over',
-                                                        'odds': outcome.get('price', 0),
-                                                        'probability': round(odds_to_probability(outcome.get('price', 0)), 1),
+                                                        'odds': price,
+                                                        'probability': round(probability, 1),
                                                         'bookmaker': bookmaker['title'],
-                                                        'game': f"{event['home_team']} vs {event['away_team']}"
+                                                        'game': f"{event.get('home_team', 'Unknown')} vs {event.get('away_team', 'Unknown')}"
                                                     })
-                        if picks:
-                            break
+                        
+                        if all_picks:
+                            print(f"Collected {len(all_picks)} tennis picks from {league}")
         except Exception as e:
             print(f"Error fetching {league}: {e}")
-    return picks
+            import traceback
+            traceback.print_exc()
+    
+    if not all_picks:
+        print("No tennis picks found")
+        return []
+    
+    # Group by player name for consensus
+    grouped = defaultdict(list)
+    for pick in all_picks:
+        key = f"{pick['player']}"
+        grouped[key].append(pick)
+    
+    # Create consensus picks
+    consensus_picks = []
+    for key, picks in grouped.items():
+        if len(picks) >= 2:  # At least 2 bookmakers agree
+            avg_probability = sum(p['probability'] for p in picks) / len(picks)
+            avg_odds = sum(p['odds'] for p in picks) / len(picks)
+            
+            consensus_picks.append({
+                'player': picks[0]['player'],
+                'prop_type': picks[0]['prop_type'],
+                'line': picks[0]['line'],
+                'pick': picks[0]['pick'],
+                'sources': len(picks),
+                'avg_probability': round(avg_probability, 1),
+                'avg_odds': round(avg_odds),
+                'bookmakers': [p['bookmaker'] for p in picks],
+                'game': picks[0]['game']
+            })
+    
+    consensus_picks.sort(key=lambda x: (x['sources'], x['avg_probability']), reverse=True)
+    print(f"Returning {len(consensus_picks)} consensus tennis picks")
+    return consensus_picks
 
 async def fetch_soccer_props():
     picks = []
@@ -2348,18 +2373,22 @@ async def parlay(ctx, sport: str = None, legs: int = 3):
             await msg.delete()
         
         for pick in picks:
-            if pick['sources'] >= 3:  # High confidence only
+            if pick['sources'] >= 2:  # Lowered to 2 books for more options
                 pick['sport'] = sport
                 all_picks.append(pick)
     else:
         # Get from all sports
         for s, picks in picks_data.items():
             if not picks:
-                picks_data[s] = await aggregate_picks(s)
-                picks = picks_data[s]
+                try:
+                    picks_data[s] = await aggregate_picks(s)
+                    picks = picks_data[s]
+                except Exception as e:
+                    print(f"Error fetching {s} for parlay: {e}")
+                    picks = []
             
             for pick in picks:
-                if pick['sources'] >= 3:  # High confidence only
+                if pick['sources'] >= 2:  # Lowered to 2 books for more options
                     pick['sport'] = s
                     all_picks.append(pick)
     
@@ -3729,6 +3758,134 @@ Bet Size: {bet_pct:.1f}% ≈ ${int(bet_pct * 10)} (Quarter Kelly, $1000 bankroll
         await msg.delete()
         await ctx.send(f"❌ Error fetching {sport.upper()} moneylines: {str(e)}")
         print(f"Straightplays error: {e}")
+
+# === AUTO ODDS API KEY COMMAND ===
+
+@bot.command()
+@is_owner()
+async def getodds(ctx):
+    """Auto-generate temp email and get Odds API key (OWNER ONLY)"""
+    
+    msg = await ctx.send("⏳ Generating temporary email and registering for Odds API...")
+    
+    try:
+        import secrets
+        import string
+        
+        # Generate random email
+        random_name = ''.join(secrets.choice(string.ascii_lowercase) for _ in range(12))
+        temp_email = f"{random_name}@mailto.plus"
+        
+        # Prepare registration data
+        register_url = "https://the-odds-api.com/api/v1/register"
+        
+        async with aiohttp.ClientSession() as session:
+            # Register for API key
+            payload = {
+                "email": temp_email,
+                "agree_to_terms": True
+            }
+            
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0"
+            }
+            
+            async with session.post(register_url, json=payload, headers=headers) as resp:
+                if resp.status == 200 or resp.status == 201:
+                    data = await resp.json()
+                    
+                    embed = discord.Embed(
+                        title="✅ Odds API Key Generated!",
+                        description="Successfully registered for a new API key",
+                        color=0x2ecc71
+                    )
+                    
+                    if 'api_key' in data:
+                        api_key = data['api_key']
+                        embed.add_field(name="🔑 API Key", value=f"`{api_key}`", inline=False)
+                        embed.add_field(name="📧 Email Used", value=f"`{temp_email}`", inline=False)
+                        embed.add_field(
+                            name="📝 How to Use",
+                            value=f"1. Add to Railway environment variables:\n`ODDS_API_KEY = {api_key}`\n\n2. Or update .env file locally",
+                            inline=False
+                        )
+                        embed.add_field(
+                            name="⚠️ Important",
+                            value="• Free tier: 500 requests/month\n• Check quota: https://the-odds-api.com/account/\n• Upgrade for player props: $50/mo",
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(name="📧 Email", value=f"`{temp_email}`", inline=False)
+                        embed.add_field(
+                            name="📬 Check Inbox",
+                            value=f"Check {temp_email} inbox (goto mailto.plus) for confirmation email with API key",
+                            inline=False
+                        )
+                    
+                    await msg.delete()
+                    await ctx.send(embed=embed)
+                    
+                else:
+                    error_text = await resp.text()
+                    await msg.edit(content=f"❌ Registration failed (Status {resp.status})\n\nResponse: {error_text[:200]}")
+                    
+    except Exception as e:
+        await msg.edit(content=f"❌ Error: {str(e)}\n\nManually register at: https://the-odds-api.com/#get-access")
+        print(f"GetOdds error: {e}")
+        import traceback
+        traceback.print_exc()
+
+# === ODDS API KEY HELPER ===
+
+@bot.command()
+async def getodds(ctx):
+    """Get instructions for free Odds API key"""
+    
+    embed = discord.Embed(
+        title="🔑 Get Your Free Odds API Key",
+        description="Follow these steps to get a free API key from The Odds API",
+        color=0x3498db
+    )
+    
+    embed.add_field(
+        name="📝 Step 1: Visit Website",
+        value="Go to: https://the-odds-api.com/#get-access",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📧 Step 2: Enter Email",
+        value="Enter any email (can use temp email from temp-mail.org)\nClick 'Get API Key'",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="🔑 Step 3: Copy Your Key",
+        value="You'll get an API key instantly on the screen\nCopy it!",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚙️ Step 4: Add to Bot",
+        value="**Railway:** Settings → Variables → Add `ODDS_API_KEY`\n**Local:** Add to `.env` file",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="📊 Free Tier Limits",
+        value="• 500 requests/month\n• Game lines (moneylines, spreads, totals)\n• No player props (need $50/mo plan)",
+        inline=False
+    )
+    
+    embed.add_field(
+        name="💎 Upgrade Benefits ($50/mo)",
+        value="• 10,000 requests/month\n• **Player props** (points, assists, rebounds)\n• All sports\n• Makes !predict way better!",
+        inline=False
+    )
+    
+    embed.set_footer(text="FTC Picks • Takes 30 seconds to setup!")
+    await ctx.send(embed=embed)
 
 # === AI CHAT COMMAND ===
 
