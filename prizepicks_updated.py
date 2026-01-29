@@ -18,6 +18,26 @@ load_dotenv()
 # ===== CONFIG SECTION =====
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
 ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
+import discord
+from discord.ext import commands
+import aiohttp
+import asyncio
+from datetime import datetime, timedelta
+import json
+from collections import defaultdict
+import sqlite3
+import random
+import time
+import os
+from dotenv import load_dotenv
+from groq import Groq
+
+# Load environment variables from .env file (for local development)
+load_dotenv()
+
+# ===== CONFIG SECTION =====
+BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
+ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')  # AI Chat
 
 # Initialize Groq client
@@ -1017,50 +1037,47 @@ async def aggregate_picks(sport):
 def create_picks_embed(sport, picks):
     emoji = SPORT_EMOJIS.get(sport, '🎯')
     
-    # Limit picks to prevent embed size issues
+    # Don't filter - show what's actually available from API
     picks = picks[:15]  # Cap at 15 total picks
     
     embed = discord.Embed(
         title=f"{emoji} {sport.upper()} PICKS",
-        description=f"**FTC Picks Premium** • {len(picks)} consensus picks",
+        description=f"**FTC Picks Premium** • {len(picks)} consensus picks\n✅ Shows only available directions (MORE/LESS based on bookmaker data)",
         color=0x9333ea,
         timestamp=datetime.now()
     )
     
-    # Separate and sort by direction (MORE first, then LESS)
+    # Separate by direction
     more_picks = [p for p in picks if 'over' in p['pick'].lower()]
     less_picks = [p for p in picks if 'under' in p['pick'].lower()]
     
-    # Sort by confidence (sources, then probability)
+    # Sort by confidence
     more_picks.sort(key=lambda x: (x['sources'], x['avg_probability']), reverse=True)
     less_picks.sort(key=lambda x: (x['sources'], x['avg_probability']), reverse=True)
     
     # MORE picks section
     if more_picks:
         text = ""
-        for i, pick in enumerate(more_picks[:6], 1):  # Limit to 6 per section
+        for i, pick in enumerate(more_picks[:8], 1):
             odds_str = f"+{pick['avg_odds']}" if pick['avg_odds'] > 0 else str(pick['avg_odds'])
-            
-            # Shortened format to prevent character limit
             text += f"**{i}. {pick['player']}**\n"
             text += f"🎯 MORE {pick['line']} {pick['prop_type']}\n"
-            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}\n\n"
-        
-        embed.add_field(name="🔥 MORE PICKS", value=text, inline=False)
+            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}\n"
+            text += f"🏟️ {pick['game']}\n\n"
+        embed.add_field(name="🔥 MORE PICKS (Always Available)", value=text, inline=False)
     
-    # LESS picks section
+    # LESS picks section - only show if API provides them
     if less_picks:
         text = ""
-        for i, pick in enumerate(less_picks[:6], 1):  # Limit to 6 per section
+        for i, pick in enumerate(less_picks[:8], 1):
             odds_str = f"+{pick['avg_odds']}" if pick['avg_odds'] > 0 else str(pick['avg_odds'])
-            
             text += f"**{i}. {pick['player']}**\n"
             text += f"🎯 LESS {pick['line']} {pick['prop_type']}\n"
-            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}\n\n"
-        
-        embed.add_field(name="❄️ LESS PICKS", value=text, inline=False)
+            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}\n"
+            text += f"🏟️ {pick['game']}\n\n"
+        embed.add_field(name="❄️ LESS PICKS (Check PrizePicks Availability)", value=text, inline=False)
     
-    embed.set_footer(text=f"FTC Picks • Real-time odds from multiple sportsbooks")
+    embed.set_footer(text=f"FTC Picks • {sport.upper()} • Showing what bookmakers offer")
     return embed
 
 def create_free_picks_embed(sport, picks):
@@ -2296,20 +2313,55 @@ async def dmall(ctx, *, message: str):
 
 @bot.command()
 @is_premium_or_cooldown('parlay')
-async def parlay(ctx, legs: int = 3):
-    """Build automatic parlay from best picks"""
+async def parlay(ctx, sport: str = None, legs: int = 3):
+    """Build automatic parlay from best picks - works for ALL sports
+    
+    Usage: !parlay nba 3      (NBA only, 3 legs)
+           !parlay nfl 4      (NFL only, 4 legs)
+           !parlay tennis 2   (Tennis only, 2 legs)
+           !parlay 3          (All sports, 3 legs)
+    """
+    
+    # Handle if user just puts number
+    if sport and sport.isdigit():
+        legs = int(sport)
+        sport = None
     
     if legs < 2 or legs > 6:
         await ctx.send("❌ Parlay must be between 2-6 legs")
         return
     
-    # Get top picks from all sports
+    # Get top picks from specified sport or all sports
     all_picks = []
-    for sport, picks in picks_data.items():
+    
+    if sport:
+        sport = sport.lower()
+        if sport not in picks_data:
+            await ctx.send(f"❌ Sport **{sport}** not supported. Use: nba, nfl, mlb, nhl, soccer, tennis, mma, csgo, cs2")
+            return
+        
+        picks = picks_data.get(sport, [])
+        if not picks:
+            msg = await ctx.send(f"⏳ Fetching {sport.upper()} picks...")
+            picks_data[sport] = await aggregate_picks(sport)
+            picks = picks_data[sport]
+            await msg.delete()
+        
         for pick in picks:
             if pick['sources'] >= 3:  # High confidence only
                 pick['sport'] = sport
                 all_picks.append(pick)
+    else:
+        # Get from all sports
+        for s, picks in picks_data.items():
+            if not picks:
+                picks_data[s] = await aggregate_picks(s)
+                picks = picks_data[s]
+            
+            for pick in picks:
+                if pick['sources'] >= 3:  # High confidence only
+                    pick['sport'] = s
+                    all_picks.append(pick)
     
     if len(all_picks) < legs:
         await ctx.send(f"❌ Not enough high confidence picks. Only {len(all_picks)} available.")
@@ -2343,24 +2395,31 @@ async def parlay(ctx, legs: int = 3):
     else:
         payout = 100 + (100 * 100 / abs(parlay_american))
     
+    sport_name = sport.upper() if sport else "MULTI-SPORT"
+    
     embed = discord.Embed(
-        title=f"🎰 {legs}-LEG PARLAY BUILDER",
-        description=f"**Odds:** {odds_str}\n**$100 Bet Pays:** ${payout:.2f}",
+        title=f"🎰 {legs}-LEG {sport_name} PARLAY",
+        description=f"**Odds:** {odds_str}\n**$100 Bet Pays:** ${payout:.2f}\n✅ Check PrizePicks for LESS availability",
         color=0xf39c12
     )
     
     for i, pick in enumerate(parlay_picks, 1):
         emoji = SPORT_EMOJIS.get(pick['sport'], '🎯')
-        direction = "MORE" if "over" in pick['pick'].lower() else "LESS"
+        direction = "MORE ✅" if "over" in pick['pick'].lower() else "LESS ⚠️"
         odds = f"+{pick['avg_odds']}" if pick['avg_odds'] > 0 else str(pick['avg_odds'])
+        sport_upper = pick['sport'].upper()
         
         embed.add_field(
-            name=f"{emoji} Leg {i}: {pick['player']}",
-            value=f"{direction} {pick['line']} {pick['prop_type']}\n{pick['sources']} books • {odds}",
+            name=f"{emoji} Leg {i}: {pick['player']} ({sport_upper})",
+            value=f"{direction} {pick['line']} {pick['prop_type']}\n{pick['game']}\n{pick['sources']} books • {odds}",
             inline=False
         )
     
-    embed.set_footer(text="FTC Picks • Parlay Builder")
+    # Add legend
+    legend = "✅ MORE = Always available on PrizePicks\n⚠️ LESS = Check PrizePicks availability"
+    embed.add_field(name="📝 Legend", value=legend, inline=False)
+    
+    embed.set_footer(text="FTC Picks • Parlay Builder • Works for ALL sports")
     await ctx.send(embed=embed)
 
 @bot.command()
@@ -3737,6 +3796,13 @@ async def aichat(ctx, *, question: str):
 3. If player is NOT in live data - say "That player has no game today" 
 4. DO NOT analyze or recommend players that aren't in the live data
 5. DO NOT make up stats, games, or matchups
+6. **CHECK API DATA**: Show both MORE and LESS if API provides them
+
+🎯 MORE vs LESS RULES:
+- **MORE (Over)**: ALWAYS available on PrizePicks ✅
+- **LESS (Under)**: Check if available from API data ⚠️
+- If recommending LESS, add: "⚠️ Check PrizePicks - LESS not always available"
+- If live data shows LESS for a player, include it but warn user
 
 📊 HOW TO RESPOND:
 
@@ -3753,10 +3819,24 @@ If NO LIVE DATA provided:
 
 🎯 RESPONSE FORMAT (when analyzing a player):
 
-🎯 **THE PLAY**: [Player from live data] MORE/LESS [Actual line from data] [Prop]
+🎯 **THE PLAY**: [Player] MORE/LESS [Line] [Prop]  
+[If LESS: add ⚠️ Check PrizePicks availability]
+
 💰 **UNIT SIZE**: [X]U
 📊 **ANALYTICS**: EV [X]% | Win Prob [X]%
 💰 **LINE VALUE**: [Actual odds from data]
+🔥 **WHY**: 
+• [Reason 1 from live data]
+• [Reason 2]
+• [Reason 3]
+📊 **GAME**: [Actual game]
+⏰ **TIME**: [Game time]
+⚠️ **RISK**: [One line]
+💡 **VERDICT**: [One sentence]
+
+📝 **PRIZEPICKS NOTE**:
+- If MORE: "✅ MORE always available on PrizePicks"
+- If LESS: "⚠️ LESS - Verify availability on PrizePicks before betting"
 🔥 **WHY**: [2-3 bullets]
 📊 **GAME**: [Actual game from data]
 ⏰ **TIME**: [Game time if known]
