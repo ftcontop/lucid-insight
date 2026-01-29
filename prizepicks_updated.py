@@ -17,7 +17,7 @@ load_dotenv()
 
 # ===== CONFIG SECTION =====
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
-ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'a4cdaf989b9900e0649a914dd8c5515d')  # Fallback to default
+ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')  # AI Chat
 
 # Initialize Groq client
@@ -211,6 +211,7 @@ picks_data = {
     'nhl': [],
     'soccer': [],
     'mma': [],
+    'tennis': [],
     'csgo': [],
     'lol': [],
     'dota2': [],
@@ -223,6 +224,7 @@ SPORT_EMOJIS = {
     'nhl': '🏒',
     'soccer': '⚽',
     'mma': '🥊',
+    'tennis': '🎾',
     'csgo': '🎮',
     'lol': '🎮',
     'dota2': '🎮',
@@ -815,6 +817,40 @@ async def fetch_nhl_props():
         print(f"Error fetching NHL: {e}")
     return picks
 
+async def fetch_tennis_props():
+    """Fetch tennis betting lines"""
+    picks = []
+    for league in ['tennis_atp', 'tennis_wta']:
+        url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
+        params = {"apiKey": ODDS_API_KEY, "regions": "us", "markets": "h2h", "oddsFormat": "american"}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=15) as resp:
+                    if resp.status == 200:
+                        events = await resp.json()
+                        for event in events:
+                            if 'bookmakers' in event and event['bookmakers']:
+                                for bookmaker in event['bookmakers']:
+                                    if 'markets' in bookmaker:
+                                        for market in bookmaker['markets']:
+                                            if 'outcomes' in market:
+                                                for outcome in market['outcomes']:
+                                                    picks.append({
+                                                        'player': outcome.get('name', 'Unknown'),
+                                                        'prop_type': 'To Win Match',
+                                                        'line': 1,
+                                                        'pick': 'Over',
+                                                        'odds': outcome.get('price', 0),
+                                                        'probability': round(odds_to_probability(outcome.get('price', 0)), 1),
+                                                        'bookmaker': bookmaker['title'],
+                                                        'game': f"{event['home_team']} vs {event['away_team']}"
+                                                    })
+                        if picks:
+                            break
+        except Exception as e:
+            print(f"Error fetching {league}: {e}")
+    return picks
+
 async def fetch_soccer_props():
     picks = []
     # Try multiple soccer leagues
@@ -933,6 +969,8 @@ async def aggregate_picks(sport):
         all_picks = await fetch_nhl_props()
     elif sport == 'soccer':
         all_picks = await fetch_soccer_props()
+    elif sport == 'tennis':
+        all_picks = await fetch_tennis_props()
     elif sport == 'mma':
         all_picks = await fetch_generic_sport('mma_mixed_martial_arts', 'MMA')
     elif sport == 'csgo':
@@ -3444,47 +3482,71 @@ async def aichat(ctx, *, question: str):
                 messages=[
                     {
                         "role": "system",
-                        "content": f"""You are an expert sports betting analyst and assistant for FTC Picks, a premium sports betting service. 
+                        "content": f"""You are an ELITE sports betting analyst for FTC Picks Premium. Your analysis must be SHARP, DETAILED, and ACTIONABLE.
 
-Today's date: {datetime.now().strftime('%B %d, %Y')}
+📅 Today: {datetime.now().strftime('%B %d, %Y')}
 
-Your expertise:
-- Player prop analysis (points, rebounds, assists, 3-pointers, etc.)
-- Line value assessment and edge finding
-- Bankroll management and bet sizing
-- Parlay building strategies
-- Sharp vs public money concepts
-- NBA, NFL, MLB, NHL, Soccer betting
-- Injury impact analysis
-- Matchup breakdowns
+🎯 YOUR EXPERTISE - UNIT SIZING SYSTEM:
+- 2U NUKE: 90%+ hit rate, maximum confidence
+- 1.5U MINI NUKE: 80%+ hit rate, very strong
+- 1.25U HEATER: 75%+ hit rate, solid play
+- 1U: Confident standard play (~65-70%)
+- 0.75U: Semi-confident (~55-60%)
+- 0.5U: Low confidence/speculative (~50-55%)
 
-Your personality:
-- Confident but not cocky
-- Honest about risk (never guarantee wins)
-- Use sports betting slang naturally
-- Keep responses concise (2-3 paragraphs max)
-- Give actionable advice
-- Use emojis sparingly for emphasis
+💰 BANKROLL MANAGEMENT:
+- With $1000 bankroll, 1U = $20 (2% rule)
+- NEVER risk more than 5% total on any day
+- Trail wins, cut losses quickly
 
-When analyzing bets:
-1. If live betting data is provided, USE IT for accurate current lines and player info
-2. Assess the value (is the line good?)
-3. Mention key factors (injury, matchup, trends)
-4. Give a clear recommendation (smash, proceed with caution, or fade)
-5. Suggest bet sizing if relevant
+📊 EVERY ANALYSIS MUST INCLUDE:
+1. WHO they're playing (opponent strength)
+2. Recent form (last 5-10 games performance)
+3. Head-to-head history
+4. Home vs away factors
+5. For TENNIS: surface type (hard/clay/grass) and tournament level
+6. Line value vs implied odds
+7. Key stats and hit rates
+8. Risk factors (injuries, variance, lineup changes)
+
+🎯 MANDATORY RESPONSE FORMAT:
+
+🎯 **THE PLAY**: [Player/Team] [Over/Under] [Line] [Prop]
+💰 **UNIT SIZE**: [X]U ([confidence %])
+🔥 **WHY IT HITS**:
+• Reason 1 with specific stats
+• Reason 2 with matchup context
+• Reason 3 with recent trends
+
+⚠️ **RISK FACTORS**:
+• Main concern
+• Secondary concern
+
+💡 **BOTTOM LINE**: [One sentence verdict]
 
 CRITICAL RULES:
-- If you don't have current info about a player/team, say "I don't have current data on this, but here's what I'd consider..."
-- Never make up stats or team rosters
-- If live data is provided above, prioritize that over your training data
-- Always acknowledge today's date when discussing games
+- If you don't have current data, SAY SO explicitly ("I don't have current data on this")
+- NEVER make up stats, rosters, or matchups
+- Use live betting data provided above if available
+- Always mention opponent and game context
+- For tennis: ALWAYS mention surface type
+- Calculate true edge (model probability - implied odds)
+- Be honest about variance and risk
+- Assign proper unit size based on confidence
 
-Never:
-- Guarantee wins or promise specific outcomes
-- Be overly verbose or academic
-- Ignore responsible gambling principles
-- Give financial advice beyond betting strategy
-- Make up player stats or current team rosters{live_data_context}"""
+PERSONALITY:
+- Sharp and direct (no fluff)
+- Data-driven but not robotic
+- Honest about risk (admit when line is tight)
+- Use betting slang naturally
+- Keep responses 2-3 paragraphs max
+
+NEVER:
+- Guarantee outcomes
+- Ignore bankroll management
+- Recommend reckless bet sizing
+- Make up opponent matchups
+- Skip mentioning key context{live_data_context}"""
                     },
                     {
                         "role": "user",
@@ -3695,7 +3757,7 @@ async def commands(ctx):
     # Premium pick commands
     embed.add_field(
         name="🎯 PICK COMMANDS",
-        value="`!predict <sport>` - Get picks (nba/nfl/mlb/nhl/soccer/mma/csgo/lol/dota2)\n`!locks` - High confidence picks across all sports\n`!potd` - Pick of the day\n`!compare <player>` - Compare odds for specific player\n`!value <sport>` - Find value bets\n\n⏰ **Trial:** 3 hour cooldown\n⏰ **Premium:** 2 hour cooldown",
+        value="`!predict <sport>` - Get picks (nba/nfl/mlb/nhl/soccer/tennis/mma/csgo/lol/dota2)\n`!locks` - High confidence picks across all sports\n`!potd` - Pick of the day\n`!compare <player>` - Compare odds for specific player\n`!value <sport>` - Find value bets\n\n⏰ **Trial:** 3 hour cooldown\n⏰ **Premium:** 2 hour cooldown",
         inline=False
     )
     
@@ -3778,4 +3840,3 @@ if __name__ == "__main__":
     print(f"Owner ID: {BOT_OWNER_ID}")
     print(f"Website: {WEBSITE_URL}")
     bot.run(BOT_TOKEN)
-
