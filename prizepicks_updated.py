@@ -3491,9 +3491,24 @@ async def straightplays(ctx, sport: str = 'nba'):
                     await ctx.send(f"❌ No games scheduled for {sport.upper()} today.")
                     return
                 
+                # Filter to only games happening TODAY (within next 24 hours)
+                now = datetime.now()
+                today_games = []
+                for event in events:
+                    if 'commence_time' in event:
+                        game_time = datetime.fromisoformat(event['commence_time'].replace('Z', '+00:00'))
+                        hours_until_game = (game_time - now).total_seconds() / 3600
+                        # Only show games starting within next 24 hours (and not started more than 2 hours ago)
+                        if -2 <= hours_until_game <= 24:
+                            today_games.append(event)
+                
+                if not today_games:
+                    await ctx.send(f"❌ No games happening in the next 24 hours for {sport.upper()}.")
+                    return
+                
                 # Create embed for each game
                 games_shown = 0
-                for event in events[:5]:  # Show top 5 games
+                for event in today_games[:5]:  # Show top 5 games TODAY
                     home_team = event.get('home_team', 'TBD')
                     away_team = event.get('away_team', 'TBD')
                     
@@ -3563,15 +3578,30 @@ async def straightplays(ctx, sport: str = 'nba'):
                     home_odds_str = f"+{int(best_home['odds'])}" if best_home['odds'] > 0 else str(int(best_home['odds']))
                     away_odds_str = f"+{int(best_away['odds'])}" if best_away['odds'] > 0 else str(int(best_away['odds']))
                     
+                    # Get game time
+                    game_time_str = "TBD"
+                    if event.get('commence_time'):
+                        try:
+                            game_time = datetime.fromisoformat(event['commence_time'].replace('Z', '+00:00'))
+                            hours_until = (game_time - datetime.now()).total_seconds() / 3600
+                            if hours_until < 1:
+                                game_time_str = "🔴 LIVE NOW"
+                            elif hours_until < 2:
+                                game_time_str = f"⏰ Starting in {int(hours_until * 60)} min"
+                            else:
+                                game_time_str = f"⏰ Starting in {int(hours_until)} hours"
+                        except:
+                            game_time_str = "Today"
+                    
                     embed.add_field(
                         name=f"🏠 {home_team} ML {home_odds_str}",
-                        value=f"📊 Best Book: {best_home['book']}\n⚡ T-{event.get('commence_time', 'TBD')[:10] if event.get('commence_time') else 'TBD'}",
+                        value=f"📊 Best Book: {best_home['book']}\n{game_time_str}",
                         inline=True
                     )
                     
                     embed.add_field(
                         name=f"✈️ {away_team} ML {away_odds_str}",
-                        value=f"📊 Best Book: {best_away['book']}\n⚡ T-{event.get('commence_time', 'TBD')[:10] if event.get('commence_time') else 'TBD'}",
+                        value=f"📊 Best Book: {best_away['book']}\n{game_time_str}",
                         inline=True
                     )
                     
@@ -3658,7 +3688,7 @@ async def aichat(ctx, *, question: str):
             # Try to extract sport from question
             question_lower = question.lower()
             detected_sport = None
-            for sport in ['nba', 'nfl', 'mlb', 'nhl', 'soccer']:
+            for sport in ['nba', 'nfl', 'mlb', 'nhl', 'soccer', 'tennis', 'cs2', 'csgo']:
                 if sport in question_lower:
                     detected_sport = sport
                     break
@@ -3672,21 +3702,24 @@ async def aichat(ctx, *, question: str):
                 elif any(word in question_lower for word in ['mahomes', 'allen', 'chiefs', 'bills', 'passing', 'rushing', 'touchdown']):
                     detected_sport = 'nfl'
             
-            # Get current picks data if sport detected
+            # Get current picks data if sport detected - ALWAYS FETCH FRESH
             live_data_context = ""
+            actual_players = []
             if detected_sport:
-                picks = picks_data.get(detected_sport, [])
-                if not picks:
-                    # Fetch fresh data
-                    picks_data[detected_sport] = await aggregate_picks(detected_sport)
-                    picks = picks_data[detected_sport]
+                # ALWAYS fetch fresh data
+                picks_data[detected_sport] = await aggregate_picks(detected_sport)
+                picks = picks_data[detected_sport]
                 
                 if picks:
-                    # Build context from top picks
-                    top_picks = picks[:10]  # Top 10 picks
-                    live_data_context = f"\n\n**CURRENT {detected_sport.upper()} BETTING DATA (Use this for accurate info):**\n"
-                    for pick in top_picks:
-                        live_data_context += f"- {pick['player']}: {pick['prop_type']} line {pick['line']} ({pick['pick']}) at {pick['avg_odds']} odds, {pick['sources']} books agree, {pick['game']}\n"
+                    # Build context from ALL picks with game times
+                    live_data_context = f"\n\n**LIVE {detected_sport.upper()} DATA - USE ONLY THESE PLAYERS (Playing TODAY):**\n"
+                    for pick in picks[:15]:  # Top 15 picks
+                        live_data_context += f"• {pick['player']}: {pick['prop_type']} line {pick['line']} ({pick['pick']}) at {pick['avg_odds']} odds, {pick['sources']} books, {pick['game']}\n"
+                        actual_players.append(pick['player'])
+                    
+                    live_data_context += f"\n**CRITICAL: ONLY use players from the list above. These are the ONLY players with games TODAY. DO NOT make up other players.**\n"
+                else:
+                    live_data_context = f"\n\n**NO {detected_sport.upper()} GAMES TODAY** - Tell user there are no games scheduled.\n"
             
             # Create AI chat with sports betting context
             response = groq_client.chat.completions.create(
@@ -3694,13 +3727,20 @@ async def aichat(ctx, *, question: str):
                 messages=[
                     {
                         "role": "system",
-                        "content": f"""You are a SHARP sports betting analyst for FTC Picks. Format responses EXACTLY like this:
+                        "content": f"""You are a SHARP sports betting analyst for FTC Picks. 
 
 📅 Today: {datetime.now().strftime('%B %d, %Y')}
 
+🚨 CRITICAL RULES - READ FIRST:
+1. ONLY analyze players from the live data provided below
+2. If live data shows "NO GAMES TODAY" - tell user no games scheduled
+3. NEVER make up players, teams, or stats
+4. If user asks about a player NOT in the live data, say "That player has no games today"
+5. The live data shows ALL players with games happening TODAY
+
 🎯 RESPONSE FORMAT (STRICT):
 
-🎯 **THE PLAY**: [Player] MORE/LESS [Line] [Prop]
+🎯 **THE PLAY**: [Player from live data] MORE/LESS [Line] [Prop]
 💰 **UNIT SIZE**: [X]U ([Confidence %])
 
 📊 **ANALYTICS**
@@ -3714,13 +3754,12 @@ Best Line: [Odds] @ [Book]
 
 🔥 **WHY THIS WINS**
 • [Opponent] [Context about opponent weakness/strength]
-• [Market] [Line movement or value explanation]
-• [Market] [Why this line projects value]
+• [Market] [Line movement or value explanation]  
+• [Recent Form] [Player's recent performance]
 
-📊 **OPPONENT**: [Who they're playing] ([Rank in relevant category])
-🏠/✈️ **VENUE**: [Home/Away context]
-🎾 **SURFACE**: [For tennis only: Hard/Clay/Grass at Tournament]
-🎮 **MAP**: [For CS2/CSGO: Map name and team record on it]
+📊 **GAME**: [Full game info from live data]
+🏠/✈️ **VENUE**: [Home/Away from game info]
+⏰ **TIME**: [Game time if available]
 
 ⚠️ **RISK**: [Main concern in one line]
 💡 **VERDICT**: [One sentence final take]
@@ -3732,9 +3771,9 @@ UNIT SYSTEM:
 - 1U Standard (65-70%)
 - 0.75U Semi-confident (55-60%)
 
-EXAMPLES:
+EXAMPLE (using REAL player from live data):
 
-NBA Example:
+NBA Example (if Luka IS in live data):
 🎯 THE PLAY: Luka Doncic MORE 28.5 Points
 💰 UNIT SIZE: 1.25U (75% confidence)
 
@@ -3744,52 +3783,28 @@ Win Prob: 72% | Confidence: 75%
 Bet Size: 1.3% ≈ $13 (Quarter Kelly, $1000 bankroll)
 
 💰 LINE VALUE
-Sharp Line: +102 (Pinnacle/Circa)
+Sharp Line: +102 (Pinnacle)
 Best Line: +114 @ FanDuel
 
 🔥 WHY THIS WINS
-• [Opponent] Lakers allows 117.8 DRtg (27th), while we produce efficient offense
-• [Market] Line movement to +114 suggests value as sharp bettors target Luka
-• [Market] +114 projects value as market underestimates our perimeter shooting
+• [Opponent] Lakers allows 117.8 DRtg (27th ranked defense)
+• [Market] Line movement from -110 to +114 shows sharp action
+• [Recent Form] Luka averaging 31 PPG last 5 games
 
-📊 OPPONENT: vs Lakers (27th in perimeter D)
-🏠 VENUE: Home (Luka averages 31 PPG at home)
+📊 GAME: Dallas Mavericks vs Los Angeles Lakers
+🏠 VENUE: Home (Luka averages 32 PPG at home)
+⏰ TIME: Tonight 7:30 PM EST
 
-⚠️ RISK: Lakers might trap Luka heavy forcing role players to beat them
-💡 VERDICT: Clear edge with Lakers tired defense on back-to-back.
+⚠️ RISK: Lakers might trap Luka heavy forcing role players
+💡 VERDICT: Clear edge with Lakers on back-to-back, roll it.
 
-Tennis Example:
-🎯 THE PLAY: Djokovic MORE 2.5 Sets
-💰 UNIT SIZE: 1.5U (82% confidence)
+If user asks about player NOT in live data:
+"[Player] has no games scheduled today. Here are today's top plays: [list 3 players from live data]"
 
-📊 ANALYTICS
-EV: 7.1% | Grade: A+
-Win Prob: 82% | Confidence: 85%
-Bet Size: 2.1% ≈ $21 (Quarter Kelly, $1000 bankroll)
+If NO LIVE DATA provided:
+"No games scheduled for [sport] today. Check back tomorrow!"
 
-💰 LINE VALUE
-Sharp Line: -145 (Pinnacle)
-Best Line: -132 @ Bet365
-
-🔥 WHY THIS WINS
-• [Opponent] Alcaraz struggles on hard court vs elite serve (3-7 record)
-• [Market] Sharp money moved line from -145 to -132
-• [Market] H2H favors Djokovic 8-3 on hard court
-
-🎾 SURFACE: Hard Court at Australian Open QF
-📊 OPPONENT: vs Alcaraz (20th in hard court win %)
-
-⚠️ RISK: Alcaraz can catch fire if his serve clicks early
-💡 VERDICT: Djokovic dominates this matchup on hard, smash it.
-
-RULES:
-- Use MORE/LESS (not over/under)
-- ALWAYS calculate Quarter Kelly bet size
-- ALWAYS show EV percentage and grade
-- ALWAYS mention opponent weakness
-- For tennis: MUST include surface
-- For CS2: MUST include map
-- Keep it CLEAN and STRUCTURED{live_data_context}"""
+CRITICAL: Use ONLY players from live data. Do NOT invent Julius Randle, Draymond Green, etc if they're not in the live data provided below.{live_data_context}"""
                     },
                     {
                         "role": "user",
