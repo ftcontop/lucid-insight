@@ -823,7 +823,19 @@ async def fetch_tennis_props():
     """Fetch tennis betting lines"""
     all_picks = []
     
-    for league in ['tennis_atp', 'tennis_wta']:
+    # Check for active tennis tournaments
+    tennis_leagues = [
+        'tennis_atp_aus_open_singles',  # ATP Australian Open
+        'tennis_wta_aus_open_singles',  # WTA Australian Open
+        'tennis_atp_french_open',       # ATP French Open (when active)
+        'tennis_wta_french_open',       # WTA French Open (when active)
+        'tennis_atp_wimbledon',         # ATP Wimbledon (when active)
+        'tennis_wta_wimbledon',         # WTA Wimbledon (when active)
+        'tennis_atp_us_open',           # ATP US Open (when active)
+        'tennis_wta_us_open',           # WTA US Open (when active)
+    ]
+    
+    for league in tennis_leagues:
         url = f"https://api.the-odds-api.com/v4/sports/{league}/odds"
         params = {"apiKey": ODDS_API_KEY, "regions": "us", "markets": "h2h", "oddsFormat": "american"}
         
@@ -861,12 +873,11 @@ async def fetch_tennis_props():
                         
                         if all_picks:
                             print(f"Collected {len(all_picks)} tennis picks from {league}")
-                            break  # Stop after finding matches
+                            # Continue checking other tournaments to get more matches
                             
         except Exception as e:
             print(f"Error fetching {league}: {e}")
-            import traceback
-            traceback.print_exc()
+            # Continue to next league
     
     print(f"Tennis returning {len(all_picks)} raw picks")
     return all_picks
