@@ -847,6 +847,7 @@ async def fetch_tennis_props():
                                                     price = outcome.get('price', 0)
                                                     probability = odds_to_probability(price)
                                                     
+                                                    # Return raw picks like other sports
                                                     all_picks.append({
                                                         'player': player_name,
                                                         'prop_type': 'To Win Match',
@@ -860,43 +861,15 @@ async def fetch_tennis_props():
                         
                         if all_picks:
                             print(f"Collected {len(all_picks)} tennis picks from {league}")
+                            break  # Stop after finding matches
+                            
         except Exception as e:
             print(f"Error fetching {league}: {e}")
             import traceback
             traceback.print_exc()
     
-    if not all_picks:
-        print("No tennis picks found")
-        return []
-    
-    # Group by player name for consensus
-    grouped = defaultdict(list)
-    for pick in all_picks:
-        key = f"{pick['player']}"
-        grouped[key].append(pick)
-    
-    # Create consensus picks
-    consensus_picks = []
-    for key, picks in grouped.items():
-        if len(picks) >= 2:  # At least 2 bookmakers agree
-            avg_probability = sum(p['probability'] for p in picks) / len(picks)
-            avg_odds = sum(p['odds'] for p in picks) / len(picks)
-            
-            consensus_picks.append({
-                'player': picks[0]['player'],
-                'prop_type': picks[0]['prop_type'],
-                'line': picks[0]['line'],
-                'pick': picks[0]['pick'],
-                'sources': len(picks),
-                'avg_probability': round(avg_probability, 1),
-                'avg_odds': round(avg_odds),
-                'bookmakers': [p['bookmaker'] for p in picks],
-                'game': picks[0]['game']
-            })
-    
-    consensus_picks.sort(key=lambda x: (x['sources'], x['avg_probability']), reverse=True)
-    print(f"Returning {len(consensus_picks)} consensus tennis picks")
-    return consensus_picks
+    print(f"Tennis returning {len(all_picks)} raw picks")
+    return all_picks
 
 async def fetch_soccer_props():
     picks = []
