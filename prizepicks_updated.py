@@ -17,7 +17,7 @@ load_dotenv()
 
 # ===== CONFIG SECTION =====
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
-ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
+ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'a4cdaf989b9900e0649a914dd8c5515d')  # Fallback to default
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')  # AI Chat
 
 # Initialize Groq client
@@ -3778,3 +3778,4 @@ if __name__ == "__main__":
     print(f"Owner ID: {BOT_OWNER_ID}")
     print(f"Website: {WEBSITE_URL}")
     bot.run(BOT_TOKEN)
+
