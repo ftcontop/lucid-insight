@@ -24,6 +24,12 @@ BALLDONTLIE_API_KEY = os.getenv('BALLDONTLIE_API_KEY', 'ac7fc030-170a-4712-a8f3-
 # Initialize Groq client
 groq_client = Groq(api_key=GROQ_API_KEY)
 
+# === PRIZEPICKS SCRAPER GLOBALS ===
+_last_prizepicks_request = 0
+_min_request_interval = 10  # 10 seconds between PrizePicks requests
+_prizepicks_cache = {}  # Cache by sport
+_cache_duration = 300  # 5 minutes cache
+
 # Payment info
 WEBSITE_URL = 'https://ftcpicks.netlify.app/'
 PAYPAL_EMAIL = '@Bhillskotter791'
@@ -552,6 +558,116 @@ def is_premium_or_cooldown(command_name='predict'):
     return commands.check(predicate)
 
 
+# === PRIZEPICKS DIRECT SCRAPER ===
+
+async def fetch_from_prizepicks(sport='NBA'):
+    """
+    Fetch props directly from PrizePicks API
+    Uses caching to avoid rate limits (5 min cache)
+    """
+    global _last_prizepicks_request, _prizepicks_cache
+    
+    # Check cache first
+    cache_key = sport.upper()
+    if cache_key in _prizepicks_cache:
+        cached_data, cache_time = _prizepicks_cache[cache_key]
+        if time.time() - cache_time < _cache_duration:
+            print(f"✅ Using cached PrizePicks data for {sport} ({int(_cache_duration - (time.time() - cache_time))}s remaining)")
+            return cached_data
+    
+    # Rate limiting
+    time_since_last = time.time() - _last_prizepicks_request
+    if time_since_last < _min_request_interval:
+        wait_time = _min_request_interval - time_since_last
+        print(f"⏳ Rate limiting: waiting {wait_time:.1f}s before PrizePicks request...")
+        await asyncio.sleep(wait_time)
+    
+    url = "https://api.prizepicks.com/projections"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://app.prizepicks.com/",
+        "Origin": "https://app.prizepicks.com"
+    }
+    
+    all_picks = []
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=20) as resp:
+                _last_prizepicks_request = time.time()
+                
+                if resp.status == 429:
+                    print(f"⚠️ PrizePicks rate limited (429). Using Odds API fallback.")
+                    return None  # Signal to use Odds API
+                
+                if resp.status != 200:
+                    print(f"❌ PrizePicks API Error: {resp.status}")
+                    return None
+                
+                data = await resp.json()
+                included = {item['id']: item for item in data.get('included', [])}
+                
+                for projection in data.get('data', []):
+                    attrs = projection.get('attributes', {})
+                    relationships = projection.get('relationships', {})
+                    
+                    # Get league info
+                    league_data = relationships.get('league', {}).get('data', {})
+                    league_id = league_data.get('id')
+                    league_info = included.get(league_id, {})
+                    league_name = league_info.get('attributes', {}).get('name', 'Unknown')
+                    
+                    # Filter by sport
+                    if sport.upper() not in league_name.upper():
+                        continue
+                    
+                    # Skip if not active
+                    status = attrs.get('status', '')
+                    if status not in ['pre_game', 'in_game']:
+                        continue
+                    
+                    # Get player info
+                    player_data = relationships.get('new_player', {}).get('data', {})
+                    player_id = player_data.get('id')
+                    player_info = included.get(player_id, {})
+                    player_name = player_info.get('attributes', {}).get('display_name', 'Unknown')
+                    
+                    # Get game info
+                    game_data = relationships.get('game', {}).get('data', {})
+                    game_id = game_data.get('id')
+                    game_info = included.get(game_id, {})
+                    game_attrs = game_info.get('attributes', {})
+                    home_team = game_attrs.get('home_team', 'Unknown')
+                    away_team = game_attrs.get('away_team', 'Unknown')
+                    
+                    # Extract prop details
+                    stat_type = attrs.get('stat_type', 'Unknown')
+                    line = attrs.get('line_score', 0)
+                    
+                    # Create picks for BOTH Over and Under
+                    for direction in ['Over', 'Under']:
+                        all_picks.append({
+                            'player': player_name,
+                            'prop_type': stat_type,
+                            'line': line,
+                            'pick': direction,
+                            'odds': -110,
+                            'probability': 50.0,
+                            'bookmaker': 'PrizePicks',
+                            'game': f"{away_team} @ {home_team}"
+                        })
+                
+                # Cache the results
+                _prizepicks_cache[cache_key] = (all_picks, time.time())
+                print(f"✅ Scraped {len(all_picks)} props from PrizePicks ({sport})")
+                return all_picks
+                
+    except Exception as e:
+        print(f"❌ PrizePicks scraper error: {e}")
+        return None
+
 # === PLAYER STATS ANALYSIS ===
 
 async def get_nba_player_stats(player_name, prop_type, line, pick_direction='over'):
@@ -657,6 +773,18 @@ def odds_to_probability(american_odds):
         return (abs(american_odds) / (abs(american_odds) + 100)) * 100
 
 async def fetch_nba_props():
+    """Fetch NBA props - tries PrizePicks first, falls back to Odds API"""
+    
+    # Try PrizePicks first
+    print("🎯 Trying PrizePicks for NBA props...")
+    prizepicks_data = await fetch_from_prizepicks('NBA')
+    
+    if prizepicks_data and len(prizepicks_data) > 0:
+        print(f"✅ Using PrizePicks data ({len(prizepicks_data)} picks)")
+        return prizepicks_data
+    
+    # Fallback to Odds API
+    print("⚠️ PrizePicks failed or rate limited, using Odds API fallback...")
     picks = []
     url = "https://api.the-odds-api.com/v4/sports/basketball_nba/events"
     
@@ -743,6 +871,18 @@ async def fetch_nba_props():
     return picks
 
 async def fetch_nfl_props():
+    """Fetch NFL props - tries PrizePicks first, falls back to Odds API"""
+    
+    # Try PrizePicks first
+    print("🎯 Trying PrizePicks for NFL props...")
+    prizepicks_data = await fetch_from_prizepicks('NFL')
+    
+    if prizepicks_data and len(prizepicks_data) > 0:
+        print(f"✅ Using PrizePicks data ({len(prizepicks_data)} picks)")
+        return prizepicks_data
+    
+    # Fallback to Odds API
+    print("⚠️ PrizePicks failed or rate limited, using Odds API fallback...")
     picks = []
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events"
     
@@ -802,6 +942,18 @@ async def fetch_nfl_props():
     return picks
 
 async def fetch_mlb_props():
+    """Fetch MLB props - tries PrizePicks first, falls back to Odds API"""
+    
+    # Try PrizePicks first
+    print("🎯 Trying PrizePicks for MLB props...")
+    prizepicks_data = await fetch_from_prizepicks('MLB')
+    
+    if prizepicks_data and len(prizepicks_data) > 0:
+        print(f"✅ Using PrizePicks data ({len(prizepicks_data)} picks)")
+        return prizepicks_data
+    
+    # Fallback to Odds API
+    print("⚠️ PrizePicks failed or rate limited, using Odds API fallback...")
     picks = []
     url = "https://api.the-odds-api.com/v4/sports/baseball_mlb/events"
     
@@ -861,6 +1013,18 @@ async def fetch_mlb_props():
     return picks
 
 async def fetch_nhl_props():
+    """Fetch NHL props - tries PrizePicks first, falls back to Odds API"""
+    
+    # Try PrizePicks first
+    print("🎯 Trying PrizePicks for NHL props...")
+    prizepicks_data = await fetch_from_prizepicks('NHL')
+    
+    if prizepicks_data and len(prizepicks_data) > 0:
+        print(f"✅ Using PrizePicks data ({len(prizepicks_data)} picks)")
+        return prizepicks_data
+    
+    # Fallback to Odds API
+    print("⚠️ PrizePicks failed or rate limited, using Odds API fallback...")
     picks = []
     url = "https://api.the-odds-api.com/v4/sports/icehockey_nhl/events"
     
