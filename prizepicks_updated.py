@@ -19,6 +19,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')  # Load from environment variable
 ODDS_API_KEY = os.getenv('ODDS_API_KEY', 'd59bf68cfe63c626018ee47f0f53ead0')  # Fallback to default
 GROQ_API_KEY = os.getenv('GROQ_API_KEY', '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')  # AI Chat
+BALLDONTLIE_API_KEY = os.getenv('BALLDONTLIE_API_KEY', 'ac7fc030-170a-4712-a8f3-60a351ee2675')  # NBA Stats
 
 # Initialize Groq client
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -551,6 +552,95 @@ def is_premium_or_cooldown(command_name='predict'):
     return commands.check(predicate)
 
 
+# === PLAYER STATS ANALYSIS ===
+
+async def get_nba_player_stats(player_name, prop_type, line):
+    """Get real player stats from balldontlie.io and calculate hit rate"""
+    try:
+        # Search for player
+        search_url = "https://api.balldontlie.io/v1/players"
+        headers = {"Authorization": BALLDONTLIE_API_KEY}
+        
+        async with aiohttp.ClientSession() as session:
+            # Find player ID
+            async with session.get(
+                search_url,
+                params={"search": player_name},
+                headers=headers,
+                timeout=10
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                
+                data = await resp.json()
+                if not data.get('data'):
+                    return None
+                
+                player = data['data'][0]  # Take first match
+                player_id = player['id']
+            
+            # Get last 10 games stats
+            stats_url = "https://api.balldontlie.io/v1/stats"
+            async with session.get(
+                stats_url,
+                params={
+                    "player_ids[]": player_id,
+                    "per_page": 10,
+                    "seasons[]": 2024  # Current season
+                },
+                headers=headers,
+                timeout=10
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                
+                stats_data = await resp.json()
+                games = stats_data.get('data', [])
+                
+                if len(games) < 5:  # Need at least 5 games
+                    return None
+                
+                # Calculate hit rate based on prop type
+                hits = 0
+                total_games = len(games)
+                prop_values = []
+                
+                for game in games:
+                    value = 0
+                    
+                    if 'points' in prop_type.lower():
+                        value = game.get('pts', 0)
+                    elif 'rebound' in prop_type.lower():
+                        value = game.get('reb', 0)
+                    elif 'assist' in prop_type.lower():
+                        value = game.get('ast', 0)
+                    elif '3' in prop_type or 'three' in prop_type.lower():
+                        value = game.get('fg3m', 0)
+                    elif 'steal' in prop_type.lower():
+                        value = game.get('stl', 0)
+                    elif 'block' in prop_type.lower():
+                        value = game.get('blk', 0)
+                    
+                    prop_values.append(value)
+                    if value > line:  # Hit the over
+                        hits += 1
+                
+                hit_rate = (hits / total_games) * 100
+                avg_value = sum(prop_values) / len(prop_values)
+                
+                return {
+                    'hit_rate': round(hit_rate, 1),
+                    'games_analyzed': total_games,
+                    'average': round(avg_value, 1),
+                    'last_5_avg': round(sum(prop_values[:5]) / 5, 1),
+                    'hits': hits,
+                    'is_good_pick': hit_rate >= 60  # 60% or better
+                }
+                
+    except Exception as e:
+        print(f"Error getting stats for {player_name}: {e}")
+        return None
+
 def odds_to_probability(american_odds):
     if american_odds > 0:
         return (100 / (american_odds + 100)) * 100
@@ -1027,7 +1117,7 @@ async def aggregate_picks(sport):
             avg_probability = sum(p['probability'] for p in picks) / len(picks)
             avg_odds = sum(p['odds'] for p in picks) / len(picks)
             
-            consensus_picks.append({
+            pick_data = {
                 'player': picks[0]['player'],
                 'prop_type': picks[0]['prop_type'],
                 'line': picks[0]['line'],
@@ -1037,10 +1127,37 @@ async def aggregate_picks(sport):
                 'avg_odds': round(avg_odds),
                 'bookmakers': [p['bookmaker'] for p in picks],
                 'game': picks[0]['game']
-            })
+            }
+            
+            # FOR NBA: Get real stats and filter
+            if sport == 'nba' and picks[0]['pick'].lower() in ['over', 'under']:
+                player_name = picks[0]['player']
+                prop_type = picks[0]['prop_type']
+                line = picks[0]['line']
+                
+                stats = await get_nba_player_stats(player_name, prop_type, line)
+                
+                if stats:
+                    # Add real stats to pick
+                    pick_data['hit_rate'] = stats['hit_rate']
+                    pick_data['player_avg'] = stats['average']
+                    pick_data['last_5_avg'] = stats['last_5_avg']
+                    pick_data['games_analyzed'] = stats['games_analyzed']
+                    
+                    # ONLY show picks with 60%+ hit rate for OVER
+                    # OR 40%+ miss rate for UNDER (60%+ hit under)
+                    if picks[0]['pick'].lower() == 'over':
+                        if not stats['is_good_pick']:
+                            print(f"❌ Filtered out {player_name} {prop_type} (Hit rate: {stats['hit_rate']}%)")
+                            continue
+                    else:  # UNDER
+                        if stats['hit_rate'] > 40:  # If hits over >40%, under is bad
+                            print(f"❌ Filtered out {player_name} {prop_type} UNDER (Hits over {stats['hit_rate']}%)")
+                            continue
+            
+            consensus_picks.append(pick_data)
     
-    consensus_picks.sort(key=lambda x: (x['sources'], x['avg_probability']), reverse=True)
-    return consensus_picks
+    consensus_picks.sort(key=lambda x: (x.get('hit_rate', 0), x['sources'], x['avg_probability']), reverse=True)
     return consensus_picks
 
 def create_picks_embed(sport, picks):
@@ -1069,9 +1186,15 @@ def create_picks_embed(sport, picks):
         text = ""
         for i, pick in enumerate(more_picks[:8], 1):
             odds_str = f"+{pick['avg_odds']}" if pick['avg_odds'] > 0 else str(pick['avg_odds'])
+            
+            # Add hit rate if available (NBA with real stats)
+            hit_rate_str = ""
+            if 'hit_rate' in pick:
+                hit_rate_str = f" • ✅ {pick['hit_rate']}% hit rate (last {pick['games_analyzed']} games)"
+            
             text += f"**{i}. {pick['player']}**\n"
             text += f"🎯 MORE {pick['line']} {pick['prop_type']}\n"
-            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}\n"
+            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}{hit_rate_str}\n"
             text += f"🏟️ {pick['game']}\n\n"
         embed.add_field(name="🔥 MORE PICKS (Always Available)", value=text, inline=False)
     
@@ -1080,9 +1203,16 @@ def create_picks_embed(sport, picks):
         text = ""
         for i, pick in enumerate(less_picks[:8], 1):
             odds_str = f"+{pick['avg_odds']}" if pick['avg_odds'] > 0 else str(pick['avg_odds'])
+            
+            # Add hit rate if available
+            hit_rate_str = ""
+            if 'hit_rate' in pick:
+                under_rate = 100 - pick['hit_rate']  # Inverse for under
+                hit_rate_str = f" • ✅ {under_rate}% hit rate (last {pick['games_analyzed']} games)"
+            
             text += f"**{i}. {pick['player']}**\n"
             text += f"🎯 LESS {pick['line']} {pick['prop_type']}\n"
-            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}\n"
+            text += f"📊 {pick['sources']} books • {pick['avg_probability']}% • {odds_str}{hit_rate_str}\n"
             text += f"🏟️ {pick['game']}\n\n"
         embed.add_field(name="❄️ LESS PICKS (Check PrizePicks Availability)", value=text, inline=False)
     
