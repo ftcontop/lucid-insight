@@ -554,7 +554,7 @@ def is_premium_or_cooldown(command_name='predict'):
 
 # === PLAYER STATS ANALYSIS ===
 
-async def get_nba_player_stats(player_name, prop_type, line):
+async def get_nba_player_stats(player_name, prop_type, line, pick_direction='over'):
     """Get real player stats from balldontlie.io and calculate hit rate"""
     try:
         # Search for player
@@ -622,11 +622,20 @@ async def get_nba_player_stats(player_name, prop_type, line):
                         value = game.get('blk', 0)
                     
                     prop_values.append(value)
-                    if value > line:  # Hit the over
-                        hits += 1
+                    
+                    # Check if hit based on direction
+                    if pick_direction.lower() in ['over', 'more']:
+                        if value > line:  # Hit the over
+                            hits += 1
+                    else:  # UNDER/LESS
+                        if value < line:  # Hit the under
+                            hits += 1
                 
                 hit_rate = (hits / total_games) * 100
                 avg_value = sum(prop_values) / len(prop_values)
+                
+                # For UNDER picks, we want LOW hit rate on overs = HIGH hit rate on unders
+                is_good_pick = hit_rate >= 60
                 
                 return {
                     'hit_rate': round(hit_rate, 1),
@@ -634,7 +643,7 @@ async def get_nba_player_stats(player_name, prop_type, line):
                     'average': round(avg_value, 1),
                     'last_5_avg': round(sum(prop_values[:5]) / 5, 1),
                     'hits': hits,
-                    'is_good_pick': hit_rate >= 60  # 60% or better
+                    'is_good_pick': is_good_pick
                 }
                 
     except Exception as e:
@@ -1134,8 +1143,9 @@ async def aggregate_picks(sport):
                 player_name = picks[0]['player']
                 prop_type = picks[0]['prop_type']
                 line = picks[0]['line']
+                pick_direction = picks[0]['pick']
                 
-                stats = await get_nba_player_stats(player_name, prop_type, line)
+                stats = await get_nba_player_stats(player_name, prop_type, line, pick_direction)
                 
                 if stats:
                     # Add real stats to pick
@@ -1144,16 +1154,11 @@ async def aggregate_picks(sport):
                     pick_data['last_5_avg'] = stats['last_5_avg']
                     pick_data['games_analyzed'] = stats['games_analyzed']
                     
-                    # ONLY show picks with 60%+ hit rate for OVER
-                    # OR 40%+ miss rate for UNDER (60%+ hit under)
-                    if picks[0]['pick'].lower() == 'over':
-                        if not stats['is_good_pick']:
-                            print(f"❌ Filtered out {player_name} {prop_type} (Hit rate: {stats['hit_rate']}%)")
-                            continue
-                    else:  # UNDER
-                        if stats['hit_rate'] > 40:  # If hits over >40%, under is bad
-                            print(f"❌ Filtered out {player_name} {prop_type} UNDER (Hits over {stats['hit_rate']}%)")
-                            continue
+                    # Filter out picks with <60% hit rate
+                    if not stats['is_good_pick']:
+                        direction = "OVER" if pick_direction.lower() == 'over' else "UNDER"
+                        print(f"❌ Filtered {player_name} {prop_type} {direction} {line} - Only {stats['hit_rate']}% hit rate (avg: {stats['average']})")
+                        continue
             
             consensus_picks.append(pick_data)
     
@@ -1204,11 +1209,10 @@ def create_picks_embed(sport, picks):
         for i, pick in enumerate(less_picks[:8], 1):
             odds_str = f"+{pick['avg_odds']}" if pick['avg_odds'] > 0 else str(pick['avg_odds'])
             
-            # Add hit rate if available
+            # Show actual UNDER hit rate (already calculated correctly)
             hit_rate_str = ""
             if 'hit_rate' in pick:
-                under_rate = 100 - pick['hit_rate']  # Inverse for under
-                hit_rate_str = f" • ✅ {under_rate}% hit rate (last {pick['games_analyzed']} games)"
+                hit_rate_str = f" • ✅ {pick['hit_rate']}% hit rate (last {pick['games_analyzed']} games)"
             
             text += f"**{i}. {pick['player']}**\n"
             text += f"🎯 LESS {pick['line']} {pick['prop_type']}\n"
