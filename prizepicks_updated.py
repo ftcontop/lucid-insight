@@ -560,6 +560,14 @@ def is_premium_or_cooldown(command_name='predict'):
 
 # === PRIZEPICKS DIRECT SCRAPER ===
 
+# User agents to rotate
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+]
+
 async def fetch_from_prizepicks(sport='NBA'):
     """
     Fetch props directly from PrizePicks API
@@ -582,22 +590,38 @@ async def fetch_from_prizepicks(sport='NBA'):
         print(f"⏳ Rate limiting: waiting {wait_time:.1f}s before PrizePicks request...")
         await asyncio.sleep(wait_time)
     
+    # Rotate user agent
+    import random
+    user_agent = random.choice(USER_AGENTS)
+    
     url = "https://api.prizepicks.com/projections"
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json",
+        "User-Agent": user_agent,
+        "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
         "Referer": "https://app.prizepicks.com/",
-        "Origin": "https://app.prizepicks.com"
+        "Origin": "https://app.prizepicks.com",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
     }
     
     all_picks = []
     
     try:
-        async with aiohttp.ClientSession() as session:
+        # Disable SSL verification to avoid issues
+        connector = aiohttp.TCPConnector(ssl=False)
+        async with aiohttp.ClientSession(connector=connector) as session:
             async with session.get(url, headers=headers, timeout=20) as resp:
                 _last_prizepicks_request = time.time()
                 
+                print(f"📡 PrizePicks response: {resp.status}")
+                
+                if resp.status == 403:
+                    print(f"⚠️ PrizePicks blocking (403). Using Odds API fallback.")
+                    return None
                 if resp.status == 429:
                     print(f"⚠️ PrizePicks rate limited (429). Using Odds API fallback.")
                     return None  # Signal to use Odds API
