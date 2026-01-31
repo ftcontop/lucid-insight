@@ -23,7 +23,7 @@ BALLDONTLIE_API_KEY = os.getenv('BALLDONTLIE_API_KEY', 'ac7fc030-170a-4712-a8f3-
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)  # Disable default help
 
 # ===== GLOBALS =====
 WEBSITE_URL = 'https://ftcpicks.netlify.app/'
