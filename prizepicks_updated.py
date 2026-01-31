@@ -560,18 +560,53 @@ def is_premium_or_cooldown(command_name='predict'):
 
 # === PRIZEPICKS DIRECT SCRAPER ===
 
-# User agents to rotate
+# Realistic user agents that match actual browsers
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
+
+# Generate realistic browser fingerprint
+def get_browser_headers():
+    import random
+    user_agent = random.choice(USER_AGENTS)
+    
+    # Determine browser type from user agent
+    is_chrome = 'Chrome' in user_agent and 'Edg' not in user_agent
+    is_firefox = 'Firefox' in user_agent
+    is_safari = 'Safari' in user_agent and 'Chrome' not in user_agent
+    
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://app.prizepicks.com/board",
+        "Origin": "https://app.prizepicks.com",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+    
+    # Add browser-specific headers
+    if is_chrome:
+        headers["sec-ch-ua"] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'
+        headers["sec-ch-ua-mobile"] = "?0"
+        headers["sec-ch-ua-platform"] = '"Windows"'
+    
+    return headers
 
 async def fetch_from_prizepicks(sport='NBA'):
     """
-    Fetch props directly from PrizePicks API
-    Uses caching to avoid rate limits (5 min cache)
+    Fetch props directly from PrizePicks API with ULTIMATE bypass
+    Uses advanced anti-detection techniques
     """
     global _last_prizepicks_request, _prizepicks_cache
     
@@ -583,114 +618,156 @@ async def fetch_from_prizepicks(sport='NBA'):
             print(f"✅ Using cached PrizePicks data for {sport} ({int(_cache_duration - (time.time() - cache_time))}s remaining)")
             return cached_data
     
-    # Rate limiting
+    # Rate limiting with randomized delay (looks more human)
     time_since_last = time.time() - _last_prizepicks_request
-    if time_since_last < _min_request_interval:
-        wait_time = _min_request_interval - time_since_last
-        print(f"⏳ Rate limiting: waiting {wait_time:.1f}s before PrizePicks request...")
+    min_delay = _min_request_interval + (hash(str(time.time())) % 3)  # 10-13s random
+    if time_since_last < min_delay:
+        wait_time = min_delay - time_since_last
+        print(f"⏳ Human-like delay: waiting {wait_time:.1f}s...")
         await asyncio.sleep(wait_time)
     
-    # Rotate user agent
-    import random
-    user_agent = random.choice(USER_AGENTS)
+    # Get realistic browser headers
+    headers = get_browser_headers()
     
-    url = "https://api.prizepicks.com/projections"
-    headers = {
-        "User-Agent": user_agent,
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://app.prizepicks.com/",
-        "Origin": "https://app.prizepicks.com",
-        "Connection": "keep-alive",
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site",
+    # Sport to league ID mapping (PrizePicks internal IDs)
+    LEAGUE_IDS = {
+        'NBA': '7',
+        'NFL': '9', 
+        'MLB': '2',
+        'NHL': '3',
+        'SOCCER': '12',
+        'TENNIS': '21',
+        'UFC': '19',
+        'MMA': '19',
     }
+    
+    league_id = LEAGUE_IDS.get(sport.upper(), None)
+    
+    # Try multiple endpoints for better success rate
+    urls_to_try = [
+        "https://api.prizepicks.com/projections",
+        f"https://api.prizepicks.com/projections?league_id={league_id}" if league_id else None,
+        f"https://api.prizepicks.com/projections?per_page=250&league_id={league_id}" if league_id else None,
+    ]
+    urls_to_try = [url for url in urls_to_try if url]  # Remove None values
     
     all_picks = []
     
-    try:
-        # Disable SSL verification to avoid issues
-        connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            async with session.get(url, headers=headers, timeout=20) as resp:
-                _last_prizepicks_request = time.time()
-                
-                print(f"📡 PrizePicks response: {resp.status}")
-                
-                if resp.status == 403:
-                    print(f"⚠️ PrizePicks blocking (403). Using Odds API fallback.")
-                    return None
-                if resp.status == 429:
-                    print(f"⚠️ PrizePicks rate limited (429). Using Odds API fallback.")
-                    return None  # Signal to use Odds API
-                
-                if resp.status != 200:
-                    print(f"❌ PrizePicks API Error: {resp.status}")
-                    return None
-                
-                data = await resp.json()
-                included = {item['id']: item for item in data.get('included', [])}
-                
-                for projection in data.get('data', []):
-                    attrs = projection.get('attributes', {})
-                    relationships = projection.get('relationships', {})
+    for attempt, url in enumerate(urls_to_try, 1):
+        try:
+            # Advanced connector settings to avoid detection
+            connector = aiohttp.TCPConnector(
+                ssl=False,  # Disable SSL verification
+                force_close=False,  # Keep connections alive
+                limit=1,  # Only 1 connection at a time (looks more human)
+            )
+            
+            # Add random delay between attempts (simulate human thinking)
+            if attempt > 1:
+                await asyncio.sleep(2 + (hash(url) % 3))
+            
+            timeout = aiohttp.ClientTimeout(total=30, connect=10)
+            
+            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+                async with session.get(url, headers=headers, allow_redirects=True) as resp:
+                    _last_prizepicks_request = time.time()
                     
-                    # Get league info
-                    league_data = relationships.get('league', {}).get('data', {})
-                    league_id = league_data.get('id')
-                    league_info = included.get(league_id, {})
-                    league_name = league_info.get('attributes', {}).get('name', 'Unknown')
+                    print(f"📡 PrizePicks attempt {attempt}/{len(urls_to_try)}: {resp.status}")
                     
-                    # Filter by sport
-                    if sport.upper() not in league_name.upper():
+                    if resp.status == 403:
+                        print(f"⚠️ Attempt {attempt} blocked (403)")
+                        if attempt < len(urls_to_try):
+                            continue  # Try next URL
+                        else:
+                            print(f"❌ All attempts blocked. Using Odds API fallback.")
+                            return None
+                    
+                    if resp.status == 429:
+                        retry_after = int(resp.headers.get('Retry-After', 30))
+                        print(f"⚠️ Rate limited. Waiting {retry_after}s...")
+                        await asyncio.sleep(retry_after)
                         continue
                     
-                    # Skip if not active
-                    status = attrs.get('status', '')
-                    if status not in ['pre_game', 'in_game']:
-                        continue
+                    if resp.status != 200:
+                        print(f"⚠️ Unexpected status {resp.status}")
+                        if attempt < len(urls_to_try):
+                            continue
+                        return None
                     
-                    # Get player info
-                    player_data = relationships.get('new_player', {}).get('data', {})
-                    player_id = player_data.get('id')
-                    player_info = included.get(player_id, {})
-                    player_name = player_info.get('attributes', {}).get('display_name', 'Unknown')
+                    # SUCCESS!
+                    data = await resp.json()
+                    included = {item['id']: item for item in data.get('included', [])}
                     
-                    # Get game info
-                    game_data = relationships.get('game', {}).get('data', {})
-                    game_id = game_data.get('id')
-                    game_info = included.get(game_id, {})
-                    game_attrs = game_info.get('attributes', {})
-                    home_team = game_attrs.get('home_team', 'Unknown')
-                    away_team = game_attrs.get('away_team', 'Unknown')
+                    projections = data.get('data', [])
+                    print(f"✅ PrizePicks SUCCESS! Got {len(projections)} total projections")
                     
-                    # Extract prop details
-                    stat_type = attrs.get('stat_type', 'Unknown')
-                    line = attrs.get('line_score', 0)
+                    for projection in projections:
+                        attrs = projection.get('attributes', {})
+                        relationships = projection.get('relationships', {})
+                        
+                        # Get league info
+                        league_data = relationships.get('league', {}).get('data', {})
+                        league_id_resp = league_data.get('id')
+                        league_info = included.get(league_id_resp, {})
+                        league_name = league_info.get('attributes', {}).get('name', 'Unknown')
+                        
+                        # Filter by sport
+                        if sport.upper() not in league_name.upper():
+                            continue
+                        
+                        # Skip if not active
+                        status = attrs.get('status', '')
+                        if status not in ['pre_game', 'in_game']:
+                            continue
+                        
+                        # Get player info
+                        player_data = relationships.get('new_player', {}).get('data', {})
+                        player_id = player_data.get('id')
+                        player_info = included.get(player_id, {})
+                        player_name = player_info.get('attributes', {}).get('display_name', 'Unknown')
+                        
+                        # Get game info
+                        game_data = relationships.get('game', {}).get('data', {})
+                        game_id = game_data.get('id')
+                        game_info = included.get(game_id, {})
+                        game_attrs = game_info.get('attributes', {})
+                        home_team = game_attrs.get('home_team', 'Unknown')
+                        away_team = game_attrs.get('away_team', 'Unknown')
+                        
+                        # Extract prop details
+                        stat_type = attrs.get('stat_type', 'Unknown')
+                        line = attrs.get('line_score', 0)
+                        
+                        # Create picks for BOTH Over and Under
+                        for direction in ['Over', 'Under']:
+                            all_picks.append({
+                                'player': player_name,
+                                'prop_type': stat_type,
+                                'line': line,
+                                'pick': direction,
+                                'odds': -110,
+                                'probability': 50.0,
+                                'bookmaker': 'PrizePicks',
+                                'game': f"{away_team} @ {home_team}"
+                            })
                     
-                    # Create picks for BOTH Over and Under
-                    for direction in ['Over', 'Under']:
-                        all_picks.append({
-                            'player': player_name,
-                            'prop_type': stat_type,
-                            'line': line,
-                            'pick': direction,
-                            'odds': -110,
-                            'probability': 50.0,
-                            'bookmaker': 'PrizePicks',
-                            'game': f"{away_team} @ {home_team}"
-                        })
-                
-                # Cache the results
-                _prizepicks_cache[cache_key] = (all_picks, time.time())
-                print(f"✅ Scraped {len(all_picks)} props from PrizePicks ({sport})")
-                return all_picks
-                
-    except Exception as e:
-        print(f"❌ PrizePicks scraper error: {e}")
-        return None
+                    # Cache the results
+                    _prizepicks_cache[cache_key] = (all_picks, time.time())
+                    print(f"🎯 Cached {len(all_picks)} PrizePicks props for {sport}")
+                    return all_picks
+                    
+        except asyncio.TimeoutError:
+            print(f"⏱️ Attempt {attempt} timed out")
+            if attempt < len(urls_to_try):
+                continue
+        except Exception as e:
+            print(f"❌ Attempt {attempt} error: {e}")
+            if attempt < len(urls_to_try):
+                continue
+    
+    # If all attempts failed, return None to trigger Odds API fallback
+    print(f"❌ All PrizePicks attempts failed. Using Odds API fallback.")
+    return None
 
 # === PLAYER STATS ANALYSIS ===
 
