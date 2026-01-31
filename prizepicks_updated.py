@@ -558,55 +558,66 @@ def is_premium_or_cooldown(command_name='predict'):
     return commands.check(predicate)
 
 
-# === PRIZEPICKS DIRECT SCRAPER ===
+# === PRIZEPICKS NUCLEAR SCRAPER WITH CLOUDFLARE BYPASS ===
 
-# Realistic user agents that match actual browsers
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-]
+import base64
+import hashlib
 
-# Generate realistic browser fingerprint
-def get_browser_headers():
+# Expanded user agents with version randomization
+def generate_random_chrome_version():
     import random
-    user_agent = random.choice(USER_AGENTS)
+    major = random.randint(115, 122)
+    minor = random.randint(0, 9)
+    build = random.randint(1000, 9999)
+    patch = random.randint(0, 999)
+    return f"{major}.0.{build}.{patch}"
+
+def get_advanced_headers():
+    """Generate ultra-realistic browser headers with CloudFlare bypass"""
+    import random
     
-    # Determine browser type from user agent
-    is_chrome = 'Chrome' in user_agent and 'Edg' not in user_agent
-    is_firefox = 'Firefox' in user_agent
-    is_safari = 'Safari' in user_agent and 'Chrome' not in user_agent
+    chrome_version = generate_random_chrome_version()
+    
+    # Realistic screen resolutions
+    resolutions = ["1920x1080", "2560x1440", "1366x768", "1536x864", "1440x900"]
+    resolution = random.choice(resolutions)
+    
+    # Platform variations
+    platforms = [
+        ("Windows NT 10.0; Win64; x64", "Windows"),
+        ("Macintosh; Intel Mac OS X 10_15_7", "macOS"),
+        ("X11; Linux x86_64", "Linux"),
+    ]
+    platform, platform_name = random.choice(platforms)
     
     headers = {
-        "User-Agent": user_agent,
+        "User-Agent": f"Mozilla/5.0 ({platform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chrome_version} Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://app.prizepicks.com/board",
+        "Accept-Encoding": "gzip, deflate, br, zstd",
+        "Referer": "https://app.prizepicks.com/",
         "Origin": "https://app.prizepicks.com",
         "DNT": "1",
         "Connection": "keep-alive",
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-site",
+        "Sec-CH-UA": f'"Chromium";v="{chrome_version.split(".")[0]}", "Google Chrome";v="{chrome_version.split(".")[0]}", "Not=A?Brand";v="99"',
+        "Sec-CH-UA-Mobile": "?0",
+        "Sec-CH-UA-Platform": f'"{platform_name}"',
         "Cache-Control": "no-cache",
         "Pragma": "no-cache",
+        # CloudFlare bypass headers
+        "Upgrade-Insecure-Requests": "1",
+        "X-Requested-With": "XMLHttpRequest",
     }
-    
-    # Add browser-specific headers
-    if is_chrome:
-        headers["sec-ch-ua"] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"'
-        headers["sec-ch-ua-mobile"] = "?0"
-        headers["sec-ch-ua-platform"] = '"Windows"'
     
     return headers
 
 async def fetch_from_prizepicks(sport='NBA'):
     """
-    Fetch props directly from PrizePicks API with ULTIMATE bypass
-    Uses advanced anti-detection techniques
+    NUCLEAR PrizePicks scraper with CloudFlare bypass
+    Uses advanced anti-bot detection evasion
     """
     global _last_prizepicks_request, _prizepicks_cache
     
@@ -618,18 +629,19 @@ async def fetch_from_prizepicks(sport='NBA'):
             print(f"✅ Using cached PrizePicks data for {sport} ({int(_cache_duration - (time.time() - cache_time))}s remaining)")
             return cached_data
     
-    # Rate limiting with randomized delay (looks more human)
+    # Human-like random delay
     time_since_last = time.time() - _last_prizepicks_request
-    min_delay = _min_request_interval + (hash(str(time.time())) % 3)  # 10-13s random
-    if time_since_last < min_delay:
-        wait_time = min_delay - time_since_last
-        print(f"⏳ Human-like delay: waiting {wait_time:.1f}s...")
+    import random
+    human_delay = random.uniform(8.5, 15.0)  # Random 8-15 seconds
+    if time_since_last < human_delay:
+        wait_time = human_delay - time_since_last
+        print(f"⏳ Human timing: {wait_time:.1f}s...")
         await asyncio.sleep(wait_time)
     
-    # Get realistic browser headers
-    headers = get_browser_headers()
+    # Generate fresh headers for each request
+    headers = get_advanced_headers()
     
-    # Sport to league ID mapping (PrizePicks internal IDs)
+    # Sport to league ID mapping
     LEAGUE_IDS = {
         'NBA': '7',
         'NFL': '9', 
@@ -641,71 +653,128 @@ async def fetch_from_prizepicks(sport='NBA'):
         'MMA': '19',
     }
     
-    league_id = LEAGUE_IDS.get(sport.upper(), None)
+    league_id = LEAGUE_IDS.get(sport.upper())
     
-    # Try multiple endpoints for better success rate
-    urls_to_try = [
-        "https://api.prizepicks.com/projections",
-        f"https://api.prizepicks.com/projections?league_id={league_id}" if league_id else None,
-        f"https://api.prizepicks.com/projections?per_page=250&league_id={league_id}" if league_id else None,
+    # Multiple bypass strategies
+    strategies = [
+        # Strategy 1: Direct with league filter
+        {
+            'url': f"https://api.prizepicks.com/projections?league_id={league_id}&per_page=250" if league_id else "https://api.prizepicks.com/projections",
+            'method': 'league_filter'
+        },
+        # Strategy 2: Paginated request (looks like user scrolling)
+        {
+            'url': f"https://api.prizepicks.com/projections?league_id={league_id}&page=1&per_page=100" if league_id else "https://api.prizepicks.com/projections?page=1",
+            'method': 'pagination'
+        },
+        # Strategy 3: With single param (simpler request)
+        {
+            'url': f"https://api.prizepicks.com/projections?league_id={league_id}" if league_id else "https://api.prizepicks.com/projections",
+            'method': 'simple'
+        },
+        # Strategy 4: Base endpoint (most basic)
+        {
+            'url': "https://api.prizepicks.com/projections",
+            'method': 'base'
+        },
     ]
-    urls_to_try = [url for url in urls_to_try if url]  # Remove None values
     
     all_picks = []
     
-    for attempt, url in enumerate(urls_to_try, 1):
+    for attempt, strategy in enumerate(strategies, 1):
         try:
-            # Advanced connector settings to avoid detection
+            url = strategy['url']
+            method = strategy['method']
+            
+            # Random delay between attempts (simulate human)
+            if attempt > 1:
+                delay = random.uniform(2.0, 5.0)
+                print(f"🤔 Thinking... {delay:.1f}s")
+                await asyncio.sleep(delay)
+            
+            # Advanced connector with residential-like settings
             connector = aiohttp.TCPConnector(
-                ssl=False,  # Disable SSL verification
-                force_close=False,  # Keep connections alive
-                limit=1,  # Only 1 connection at a time (looks more human)
+                ssl=False,
+                force_close=False,
+                enable_cleanup_closed=True,
+                limit=1,  # Single connection
+                ttl_dns_cache=300,  # DNS cache like real browser
             )
             
-            # Add random delay between attempts (simulate human thinking)
-            if attempt > 1:
-                await asyncio.sleep(2 + (hash(url) % 3))
+            timeout = aiohttp.ClientTimeout(total=45, connect=15, sock_read=30)
             
-            timeout = aiohttp.ClientTimeout(total=30, connect=10)
-            
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
+            # Create session with cookies (makes it look persistent)
+            async with aiohttp.ClientSession(
+                connector=connector,
+                timeout=timeout,
+                cookie_jar=aiohttp.CookieJar()
+            ) as session:
+                
+                print(f"🎯 Strategy {attempt}/{len(strategies)}: {method}")
+                
                 async with session.get(url, headers=headers, allow_redirects=True) as resp:
                     _last_prizepicks_request = time.time()
                     
-                    print(f"📡 PrizePicks attempt {attempt}/{len(urls_to_try)}: {resp.status}")
+                    status = resp.status
+                    print(f"📡 Response: {status}")
                     
-                    if resp.status == 403:
-                        print(f"⚠️ Attempt {attempt} blocked (403)")
-                        if attempt < len(urls_to_try):
-                            continue  # Try next URL
+                    # Handle CloudFlare challenge
+                    if status == 403:
+                        # Check if it's CloudFlare
+                        content = await resp.text()
+                        if 'cloudflare' in content.lower() or 'cf-ray' in str(resp.headers):
+                            print(f"🛡️ CloudFlare detected on attempt {attempt}")
+                            
+                            # Try to extract cf-ray
+                            cf_ray = resp.headers.get('CF-Ray', 'unknown')
+                            print(f"📍 CF-Ray: {cf_ray}")
+                            
+                            if attempt < len(strategies):
+                                # Wait longer for CloudFlare cooldown
+                                cooldown = random.uniform(5.0, 8.0)
+                                print(f"❄️ CloudFlare cooldown: {cooldown:.1f}s")
+                                await asyncio.sleep(cooldown)
+                                continue
                         else:
-                            print(f"❌ All attempts blocked. Using Odds API fallback.")
-                            return None
+                            print(f"🚫 403 blocked (non-CloudFlare)")
+                            if attempt < len(strategies):
+                                continue
                     
-                    if resp.status == 429:
-                        retry_after = int(resp.headers.get('Retry-After', 30))
-                        print(f"⚠️ Rate limited. Waiting {retry_after}s...")
-                        await asyncio.sleep(retry_after)
-                        continue
-                    
-                    if resp.status != 200:
-                        print(f"⚠️ Unexpected status {resp.status}")
-                        if attempt < len(urls_to_try):
+                    if status == 429:
+                        retry_after = int(resp.headers.get('Retry-After', 45))
+                        print(f"⏱️ Rate limit: {retry_after}s")
+                        if attempt < len(strategies) and retry_after < 60:
+                            await asyncio.sleep(retry_after)
                             continue
-                        return None
+                        else:
+                            break
+                    
+                    if status == 503:
+                        print(f"🔧 Service unavailable")
+                        if attempt < len(strategies):
+                            await asyncio.sleep(3)
+                            continue
+                    
+                    if status != 200:
+                        print(f"⚠️ Status {status}")
+                        if attempt < len(strategies):
+                            continue
+                        break
                     
                     # SUCCESS!
+                    print(f"✅ BREAKTHROUGH! Strategy '{method}' worked!")
                     data = await resp.json()
-                    included = {item['id']: item for item in data.get('included', [])}
                     
+                    included = {item['id']: item for item in data.get('included', [])}
                     projections = data.get('data', [])
-                    print(f"✅ PrizePicks SUCCESS! Got {len(projections)} total projections")
+                    
+                    print(f"📊 Retrieved {len(projections)} projections")
                     
                     for projection in projections:
                         attrs = projection.get('attributes', {})
                         relationships = projection.get('relationships', {})
                         
-                        # Get league info
+                        # Get league
                         league_data = relationships.get('league', {}).get('data', {})
                         league_id_resp = league_data.get('id')
                         league_info = included.get(league_id_resp, {})
@@ -715,18 +784,18 @@ async def fetch_from_prizepicks(sport='NBA'):
                         if sport.upper() not in league_name.upper():
                             continue
                         
-                        # Skip if not active
+                        # Only active games
                         status = attrs.get('status', '')
                         if status not in ['pre_game', 'in_game']:
                             continue
                         
-                        # Get player info
+                        # Get player
                         player_data = relationships.get('new_player', {}).get('data', {})
                         player_id = player_data.get('id')
                         player_info = included.get(player_id, {})
                         player_name = player_info.get('attributes', {}).get('display_name', 'Unknown')
                         
-                        # Get game info
+                        # Get game
                         game_data = relationships.get('game', {}).get('data', {})
                         game_id = game_data.get('id')
                         game_info = included.get(game_id, {})
@@ -734,11 +803,11 @@ async def fetch_from_prizepicks(sport='NBA'):
                         home_team = game_attrs.get('home_team', 'Unknown')
                         away_team = game_attrs.get('away_team', 'Unknown')
                         
-                        # Extract prop details
+                        # Prop details
                         stat_type = attrs.get('stat_type', 'Unknown')
                         line = attrs.get('line_score', 0)
                         
-                        # Create picks for BOTH Over and Under
+                        # Both directions
                         for direction in ['Over', 'Under']:
                             all_picks.append({
                                 'player': player_name,
@@ -751,24 +820,29 @@ async def fetch_from_prizepicks(sport='NBA'):
                                 'game': f"{away_team} @ {home_team}"
                             })
                     
-                    # Cache the results
+                    # Cache success
                     _prizepicks_cache[cache_key] = (all_picks, time.time())
-                    print(f"🎯 Cached {len(all_picks)} PrizePicks props for {sport}")
+                    print(f"💾 Cached {len(all_picks)} props for {sport}")
                     return all_picks
                     
         except asyncio.TimeoutError:
-            print(f"⏱️ Attempt {attempt} timed out")
-            if attempt < len(urls_to_try):
+            print(f"⏱️ Timeout on attempt {attempt}")
+            if attempt < len(strategies):
+                continue
+        except aiohttp.ClientError as e:
+            print(f"🌐 Network error: {type(e).__name__}")
+            if attempt < len(strategies):
+                await asyncio.sleep(random.uniform(2, 4))
                 continue
         except Exception as e:
-            print(f"❌ Attempt {attempt} error: {e}")
-            if attempt < len(urls_to_try):
+            print(f"❌ Error on attempt {attempt}: {type(e).__name__}")
+            if attempt < len(strategies):
                 continue
     
-    # If all attempts failed, return None to trigger Odds API fallback
-    print(f"❌ All PrizePicks attempts failed. Using Odds API fallback.")
+    # All strategies failed
+    print(f"💥 All {len(strategies)} bypass strategies failed")
+    print(f"🔄 Switching to Odds API...")
     return None
-
 # === PLAYER STATS ANALYSIS ===
 
 async def get_nba_player_stats(player_name, prop_type, line, pick_direction='over'):
